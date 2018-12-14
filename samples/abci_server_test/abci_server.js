@@ -108,11 +108,20 @@ let server = createServer({
 	return { code: 0, log: 'endBlock succeeded' }
   },
   
-  commit: function(request){
-	console.log('Call: Commit'); 
-	console.debug( request );  
+  //Commit msg for each block.
+  commit: function(){
+	console.log('Call: Commit block'); 
 	
-	return { code: 0, log: 'commit succeeded' }
+	let hash = crypto.createHash('sha256');
+	
+	if (AppHash == false){ //changed by this block
+	
+		//calc App state 
+		AppHash = hash.update( TXHash, 'utf8' ).update( STATEHash, 'utf8' ).digest('hex');
+		console.log('New app hash: ' + AppHash);
+	}
+	
+	return { code: 0, data: AppHash, log: 'Commit succeeded' }
   } 
 
 });
