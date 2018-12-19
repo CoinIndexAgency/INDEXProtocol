@@ -8,6 +8,9 @@ include('libExchages.php');
 $txCacheDbFile = 'tx.cache.db';
 $txCacheMaxItems = 1000;
 
+//store only trx last 15 min (and 1 min diff delay)
+$txFrom = time() - ((15 * 60) + 60);
+
 $txCache = Array();
 
 echo date('r') . "  Starting cache tx loading...\n";
@@ -20,11 +23,13 @@ if (file_exists( $txCacheDbFile )){
 		
 		if (!empty($z[0]) && !empty($z[1])){
 			$txCache[ $z[0] ] = explode(';', $z[1]);
+			
+			echo $z[0] . " cached " . count( $txCache[ $z[0] ] ) . "\n";
 		}
 	}
 }
 
-echo date('r') . "  Cache tx loaded OK\n\n";
+echo "\n" . date('r') . "  Cache tx loaded OK\n\n";
 
 $sourceURL = Array(
 	'CEX.io' 	=>	'https://cex.io/api/trade_history/BTC/USD/',
@@ -72,6 +77,9 @@ $sourceURL = Array(
 
 echo "Found: " . count($sourceURL) . " sources.\n";
 
+//float to integer
+$FIXED_DXDY = 1000000000;
+
 foreach($sourceURL as $ex => $url){
 	echo date('r') . "  Processing: " . $ex . " => " . $url;
 	
@@ -87,7 +95,76 @@ foreach($sourceURL as $ex => $url){
 			if (!empty($tdata)){
 				echo "... Found: " . count( $tdata ) . " trades";
 				
+				$newTrades = Array();
 				
+				if (!array_key_exists($ex, $txCache)){
+					$txCache[ $ex ] = Array();
+				}
+				
+				echo "\n";	
+				$newTx = 0;
+				
+				foreach($tdata as $t){
+					if ($t['ts'] < $txFrom) continue;
+					
+					
+					//var_dump( $t );
+					if (!in_array($t['_hash'], $txCache[ $ex ])){
+						//новая транзакция 
+						$_hash = $t['_hash'];
+						
+						//unset($t['_hash']);
+						unset($t['_org']);
+						
+						//fix float to Int 
+						$t['price'] = intval( $t['price'] * $FIXED_DXDY );
+						$t['amount'] = intval( $t['amount'] * $FIXED_DXDY );
+						$t['total'] = intval( $t['total'] * $FIXED_DXDY );
+						
+						/**
+						echo "\n===============\n";
+						$z1 = json_encode($t);
+						echo $z1 . "\n";
+						
+						//echo base64_encode(json_encode($t)) . "\n";
+						
+						$z2 = pack('H*', base64_encode($z1));
+						
+						echo $z2 . "\n";
+						
+						//echo bin2hex( pack('H*', base64_encode(json_encode($t))) ) . "\n\n------------------\n";
+						
+						//exit();
+						*/
+						//теперь в HEX-виде представим 
+						//$_tx = bin2hex( pack('H*', base64_encode(json_encode($t))) );
+						
+						$_tx = 'cet:' . base64_encode(json_encode($t));
+						
+						$_tx_url = 'http://rpc.testnet.indexprotocol.online/broadcast_tx_async?tx="' . $_tx . '"&_=' . microtime(true);
+						
+						//отправляем сразу 
+						$checkTx = file_get_contents($_tx_url);
+						
+						//add checkig results
+						//var_dump($checkTx);
+						
+						$txCache[ $ex ][] = $_hash;	
+						
+						echo $_tx_url . "\n";
+						$newTx++;
+						
+						echo ".";
+						sleep(1);
+						//exit();
+					}
+				}
+				
+				echo "\n" . date('r') . "  New transactions: " . $newTx . " from " . count($tdata) . "\n";
+				
+				//echo "\n\n";
+				
+				sleep(1);
 			}			
 		}
 		else
@@ -99,3 +176,14 @@ foreach($sourceURL as $ex => $url){
 	echo "\n\n";	
 }
 
+//сохраняем кеш 
+	echo date('r') . "  Store cache...\n";
+				foreach($txCache as $a => $b){
+					$txCache[ $a ] = $a . '::' . implode(';', $b);
+				}
+				
+				$_rawCache = implode("\n", array_values($txCache));
+				
+				file_put_contents( $txCacheDbFile, $_rawCache );
+	
+	echo date('r') . "  Finish all. Good buy!\n";
