@@ -4,8 +4,19 @@ let createServer 	= require('abci');
 const crypto 		= require('crypto');
 const v8 			= require('v8');
 const { spawn } 	= require('child_process');
-let _				= require('./underscore-min.js');
+let _				= require('underscore');
+let stringify 		= require('fast-json-stable-stringify');
+let redis 			= require('redis');
+var deasync 		= require('deasync');
+var emitter			= require('events');
+const events = new emitter();
 
+
+//debug   
+// opt/tendermint/redix -storage /opt/tendermint/data/redix -workers 2 -verbose 
+
+var APP_VERION = 'testnet-1';
+var VERION = '0.0.1';
 
 //Global state of APP
 var STATE 	= {};
@@ -22,10 +33,24 @@ var Height 	= 0;
 //Global APP state hash (Merkle root of state) returns at Commit call. SHA-256 or 512
 var AppHash = ''; 
 
-var tendermint = null; //Tendermint core process
+var lastSaveState = {
+		'appHash' 		: '',
+		'blockHeight' 	: 0, 
+		'version'		: VERION, 
+		'appVersion' 	: APP_VERION
+	};
 
-let server = createServer({
+var tendermint 	= null; //Tendermint core process
+var redix 		= redis.createClient({host:'localhost', port: 6380});
 	
+	redix.on('error', function (err){
+		console.log('Redix error!');
+		console.debug(err);
+		
+		process.exit(1);
+	});
+	
+let server = createServer({
 	
 	//Global initialize network
 	//Called once upon genesis
@@ -42,6 +67,10 @@ let server = createServer({
 		
 		STATE = {};
 		STATEHash = '';
+		
+		//clear Redix store 
+		redix.hdel('TX');
+		redix.hdel('appState');		
 		
 		let hash = crypto.createHash('sha256');
 		
@@ -65,9 +94,14 @@ let server = createServer({
 	//todo: store and restore state if need
 	contracts.init(); 
 	
+	
+	//redix.hgetall('appState', function(err, data){}); 
+	//console.debug( lastSaveState );
+	
 	return {
 		data: 'Node.js INDEX Protocol app',
-		lastBlockHeight: 870
+		lastBlockHeight: lastSaveState.blockHeight,    //870
+		//lastBlockAppHash: lastSaveState.appHash  //now disable for debug
 	}; 
 	
 	/*,
@@ -153,7 +187,13 @@ let server = createServer({
 		console.log('At block commited: ' + BlockTx.length + ' tx.');
 		
 		//BlockTx.unshift({Height: hx});
-		TX.unshift( { Height: hx.toString(), tx: BlockTx } );		
+		if (TX.length >= 3 * 3600)	//save to memory only last 3h blocks
+			TX.pop();
+		
+		TX.unshift( { Height: hx.toString(), tx: BlockTx } );
+
+		//save state 
+		redix.hset('TX', hx.toString(), stringify( BlockTx ));
 		
 		TXHash = '';
 		BlockTx = []; //clearing new buffer		
@@ -164,9 +204,7 @@ let server = createServer({
 	//Run contracts here!
 	contracts.run( parseInt( hx.toString() ) );
 	
-	
-	
-	
+		
 	return { code: 0, log: 'endBlock succeeded' }
   },
   
@@ -175,14 +213,20 @@ let server = createServer({
 	//console.log('Call: Commit block'); 
 	
 	let hash = crypto.createHash('sha256');
+	let appHashHex = '';
 	
 	if (AppHash == false){ //changed by this block
 	
 		//calc App state 
 		AppHash = hash.update( TXHash, 'utf8' ).update( STATEHash, 'utf8' );
-		//.digest('hex');
-		console.log('New app hash: ' + AppHash.digest('hex'));
+		
+		appHashHex = AppHash.digest('hex');
+
+		console.log('New app hash: ' + appHashHex);
 	}
+	
+	//фиксируем хеш и номер блока
+	redix.hmset(['appState', 'appHash', appHashHex, 'blockHeight', Height.toString(), 'version', VERION, 'appVersion', APP_VERION]);
 	
 	return { code: 0, data: AppHash, log: 'Commit succeeded' }
   } 
@@ -205,40 +249,42 @@ setInterval(function(){
 }, 3*60000);
 
 //=================================================================
-var contracts = {
+let contracts = {
 	_store: {
-		{
+		'9db7eb6d85d0e5d9baa94ea861a92e5c': {
 			'id'	: '9db7eb6d85d0e5d9baa94ea861a92e5c',
 			'name'  : 'test-contract-z',
 			'enabled'	: true, //false for disable
-			'precheck': function(height, name){
+			'precheck': function(height, name, _this){
 				return true; //return True to run contract of false if no
 			},
 			'contract' : function(height, name){
 				//contract code her
-				console.log('Contract: ' + name + ' at block ' + height);
+				console.log('Contract [' + name + '] at block ' + height);
 				
 				return true;
 			}
 		},
-		{
+		'1db7eb': {
 			'id'	: '1db7eb',
 			'name'  : '5minBTCUSDBenchmarkPrice',
 			'enabled'	: true, //false for disable
-			'precheck': function(height, name){
+			'precheck': function(height, name, _this){
 				
-				if (this._counter[ name ] != 300){
-					this._counter[ name ]++;
+				console.log('Counter: ' + _this._counter[ name ]);
+				
+				if (_this._counter[ name ] != 300){
+					_this._counter[ name ]++;
 					return false;
 				}
 				
-				this._counter[ name ] = 0;
+				_this._counter[ name ] = 0;
 				
 				return true;
 			},
 			'contract' : function(height, name){
 				//contract code her
-				console.log('Call contract!');
+				console.log('Call contract fn!');
 			}
 		}		
 	},
@@ -250,7 +296,10 @@ var contracts = {
 	
 	//initialize states and counters
 	init: function(){
-		_.each(_store, function(v){
+		_.each(this._store, function(v){
+			
+			console.log( v.name );
+		
 			this._counter[ v.name ] = 0;
 		}, contracts);
 	},
@@ -258,19 +307,24 @@ var contracts = {
 	// start scheduller of contracts by rule
 	run: function( height ){
 		
-		_.each(_store, function(v){
+		//console.log( height );
+		//console.log( this._counter );
+		
+		_.each(this._store, function(v){
+			
+			//console.debug( v );
 			
 			if (v.enabled === true && (_.isFunction( v.precheck )) && (_.isFunction( v.contract ))){
-				if ( v.precheck(height) === true ){
+				if ( v.precheck(height, v.name, this) === true ){
 					
 					let res = v.contract( height, v.name  );
 						
 					if (res === true){
-						contracts._counter[ v.name ] = 0;
+						this._counter[ v.name ] = 0;
 					}
 				}
 			}
-		});			
+		}, contracts);			
 	}
 };
 
@@ -279,24 +333,54 @@ var contracts = {
 
 
 
-
-
-
-//Connect to localhost
-server.listen(26658, function(){
-	console.log('Server started OK');
+redix.on('ready', function (err){
+	console.log('Redix connected OK!');
 	
+	//lastSaveState
+	redix.hgetall('appState', function(err, data){
+		if (!err && data){
+			
+			lastSaveState = data;
+			lastSaveState.appHash = Buffer.from(lastSaveState.appHash, 'hex');
+			
+			console.log('Restored last save state....');
+			console.debug( lastSaveState );
+
+			//all passed ok
+			events.emit('startABCIServerApp');			
+		}
+		else
+		{
+			console.log('ERROR while starting node');
+			process.exit(1);
+		}			
+	});	
+});
+
+
+
+events.on('startTendermintNode', function(){
+	//@todo: add starting Redix server node too
 	console.log('Tendermint core starting...');
-	
+		
 	tendermint = spawn('/opt/tendermint/tendermint', ['node', '--home=/opt/tendermint']);
-	
+		
 	tendermint.stdout.on('data', (data) => {
 	  console.log('TC:' + data);
 	});
 
 	tendermint.on('close', (code) => {
 	  console.log('tCore: child process exited with code: ' + code);
-	  
+		  
 	  process.exit(1);
+	});	
+});
+
+
+events.on('startABCIServerApp', function(){
+	server.listen(26658, function(){
+		console.log('Server started OK');
+		
+		events.emit('startTendermintNode');
 	});
 });
