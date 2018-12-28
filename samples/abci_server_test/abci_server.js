@@ -9,7 +9,7 @@ let stringify 		= require('fast-json-stable-stringify');
 let redis 			= require('redis');
 var deasync 		= require('deasync');
 var emitter			= require('events');
-const events = new emitter();
+const events 		= new emitter();
 
 
 //debug   
@@ -40,8 +40,9 @@ var lastSaveState = {
 		'appVersion' 	: APP_VERION
 	};
 
-var tendermint 	= null; //Tendermint core process
-var redix 		= redis.createClient({host:'localhost', port: 6380});
+var tendermint 		= null; //Tendermint core process
+var redixProc 		= null;
+var redix 			= redis.createClient({host:'localhost', port: 6380});
 	
 	redix.on('error', function (err){
 		console.log('Redix error!');
@@ -176,7 +177,7 @@ let server = createServer({
   endBlock: function(request){
 	//let req = request.toString(
 	//console.log('Fuck');
-	//	console.debug( request ); 
+	//	console.debug( request );    
 	//console.log('ass');
 	
 	let hx = request.height;
@@ -360,7 +361,7 @@ redix.on('ready', function (err){
 
 
 events.on('startTendermintNode', function(){
-	//@todo: add starting Redix server node too
+
 	console.log('Tendermint core starting...');
 		
 	tendermint = spawn('/opt/tendermint/tendermint', ['node', '--home=/opt/tendermint']);
@@ -376,11 +377,29 @@ events.on('startTendermintNode', function(){
 	});	
 });
 
+//for test only!
+events.on('startRedixNode', function(){
+	console.log('Redix server starting...');
+	
+	redixProc = spawn('/opt/tendermint/redix', ['-storage', '/opt/tendermint/data/redix', '-workers', '2']);
+	
+	redixProc.stdout.on('data', (data) => {
+	  console.log('Redix:' + data);
+	});
+	
+	redixProc.on('close', (code) => {
+	  console.log('Redix: child process exited with code: ' + code);
+		  
+	  process.exit(1);
+	});	
+});
+
 
 events.on('startABCIServerApp', function(){
 	server.listen(26658, function(){
 		console.log('Server started OK');
 		
+		events.emit('startRedixNode');
 		events.emit('startTendermintNode');
 	});
 });

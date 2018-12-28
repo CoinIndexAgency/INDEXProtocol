@@ -2,11 +2,31 @@
 //Used libExchange provided by CoinIndex Ltd.
 //For test, use only BTC/USD trading pair from some exchanges
 
+	//prevent double running
+	$__outp = Array();	
+	exec('ps ax|grep "[f]eedloader.php"', $__outp);
+	
+	if (count($__outp) > 2){
+		echo "WARN: Another process has running...exit\n";
+        die();
+	}
+
+
+
+
+$_t1 = microtime(true);
+
 include('libExchages.php');
 
 //Extra-simple cache db - store last 1000 hashes of trades for each exchange.
 $txCacheDbFile = 'tx.cache.db';
 $txCacheMaxItems = 1000;
+
+//Count of blocks
+$countPerBlock = 13; 
+
+//RPC URL
+$rpcURL = 'http://localhost:8080'; //or http://rpc.testnet.indexprotocol.online
 
 //store only trx last 15 min (and 1 min diff delay)
 $txFrom = time() - ((15 * 60) + 60);
@@ -29,8 +49,11 @@ if (file_exists( $txCacheDbFile )){
 	}
 }
 
-echo "\n" . date('r') . "  Cache tx loaded OK\n\n";
+echo "\n" . date('r') . "  Cache tx loaded OK (items: ".count($_txc).")\n\n";
 
+$resURL = Array();
+
+//base sources
 $sourceURL = Array(
 	'CEX.io' 	=>	'https://cex.io/api/trade_history/BTC/USD/',
 	'BTC-Alpha' =>	'https://btc-alpha.com/api/v1/exchanges/?format=json&limit=250&pair=BTC_USD',
@@ -73,14 +96,21 @@ $sourceURL = Array(
 
 
 //Randomize all 
-//shuffle( $sourceURL );
+$_keys = array_keys($sourceURL);
 
-echo "Found: " . count($sourceURL) . " sources.\n";
+shuffle( $_keys );
+
+$_keys = array_chunk($_keys, $countPerBlock)[0];
+
+echo "At round, we use source: " . implode(', ', $_keys) . "\n";
+//echo "Found: " . count($sourceURL) . " sources.\n";
 
 //float to integer
 $FIXED_DXDY = 1000000000;
 
-foreach($sourceURL as $ex => $url){
+foreach($_keys as $ex){
+	$url = $sourceURL[ $ex ]; 
+	
 	echo date('r') . "  Processing: " . $ex . " => " . $url;
 	
 	$data = @file_get_contents( $url );
@@ -93,7 +123,7 @@ foreach($sourceURL as $ex => $url){
 			$tdata = parseTrades($ex, $json, Array('asset' => 'BTC', 'currency' => 'USD', 'type' => 'FX'));
 			
 			if (!empty($tdata)){
-				echo "... Found: " . count( $tdata ) . " trades";
+				//echo "... Found: " . count( $tdata ) . " trades";
 				
 				$newTrades = Array();
 				
@@ -121,6 +151,8 @@ foreach($sourceURL as $ex => $url){
 						$t['amount'] = intval( $t['amount'] * $FIXED_DXDY );
 						$t['total'] = intval( $t['total'] * $FIXED_DXDY );
 						
+						$t['excode'] = strtolower($ex);
+						
 						/**
 						echo "\n===============\n";
 						$z1 = json_encode($t);
@@ -141,9 +173,10 @@ foreach($sourceURL as $ex => $url){
 						
 						$_tx = 'cet:' . base64_encode(json_encode($t));
 						
-						$_tx_url = 'http://rpc.testnet.indexprotocol.online/broadcast_tx_async?tx="' . $_tx . '"&_=' . microtime(true);
+						$_tx_url = $rpcURL . '/broadcast_tx_async?tx="' . $_tx . '"&_=' . microtime(true);
 						
 						//отправляем сразу 
+						//$resURL[] = $_tx_url;
 						$checkTx = file_get_contents($_tx_url);
 						
 						//add checkig results
@@ -152,19 +185,20 @@ foreach($sourceURL as $ex => $url){
 						$txCache[ $ex ][] = $_hash;	
 						
 						echo $_tx_url . "\n";
+						
 						$newTx++;
 						
-						echo ".";
-						sleep(1);
+						//echo ".";
+						//sleep(1);
 						//exit();
 					}
 				}
 				
-				echo "\n" . date('r') . "  New transactions: " . $newTx . " from " . count($tdata) . "\n";
+				echo date('r') . "  New transactions: " . $newTx . " from " . count($tdata) . "\n";
 				
 				//echo "\n\n";
 				
-				sleep(1);
+				//usleep(100000);
 			}			
 		}
 		else
@@ -178,12 +212,26 @@ foreach($sourceURL as $ex => $url){
 
 //сохраняем кеш 
 	echo date('r') . "  Store cache...\n";
-				foreach($txCache as $a => $b){
-					$txCache[ $a ] = $a . '::' . implode(';', $b);
-				}
-				
-				$_rawCache = implode("\n", array_values($txCache));
-				
-				file_put_contents( $txCacheDbFile, $_rawCache );
 	
-	echo date('r') . "  Finish all. Good buy!\n";
+	foreach($txCache as $a => $b){
+		$txCache[ $a ] = $a . '::' . implode(';', $b);
+	}
+	
+	$_rawCache = implode("\n", array_values($txCache));
+	
+	file_put_contents( $txCacheDbFile, $_rawCache );
+	
+/**	
+	if (!empty($resURL)){
+	
+		shuffle( $resURL );
+		
+		echo "\nTotal query to send: " . count( $resURL ) . "\n";
+		
+		foreach($resURL as $txq){
+			$checkTx = file_get_contents( $txq );	
+			echo ".";
+		}
+	}
+**/
+	echo date('r') . "  Finish all at ".(microtime(true) - $_t1)." sec.\n";
