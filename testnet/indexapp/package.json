@@ -1,0 +1,20 @@
+{
+    "name": "indexapp",
+    "preferGlobal": true,
+    "version": "0.0.1",
+    "author": "Aleks Raiden <raiden@indexprotocol.network>",
+    "description": "Alpha version of ABCI App for INDEX Protocol Testnet",
+    "license": "MIT",
+    "engines": {
+        "node": ">=0.10"
+    },
+    "scripts": {
+        "start": "node ./indexapp.js"
+    },
+    "dependencies": {
+        "redis" : "^2.8",
+		"underscore" : "^1.9",
+		"fast-json-stable-stringify" : "^2.0",
+		"abci" : "github:CoinIndexAgency/js-abci"
+    }
+}
