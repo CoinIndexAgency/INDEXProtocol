@@ -12,7 +12,7 @@ var prettyHrtime 	= require('pretty-hrtime');
 const zlib 			= require('zlib');
 
 const storeLatestBlocks = 900; //how many blocks decoded and stored
-
+const fixedExponent = 1000000000;
 
 //APP state
 let appState = {
@@ -70,6 +70,8 @@ let indexProtocol = {
 			let calcAvg = {
 				symbol: 'BTC/USD',
 				
+				blockHeight: height, 
+				
 				avgPrice: 0,
 				minPrice: 0,
 				maxPrice: 0,
@@ -84,7 +86,6 @@ let indexProtocol = {
 				closeVolume : 0,
 				closeAmount: 0,
 				
-				twapPrice: 0,
 				vwapPrice: 0,
 				
 				timeFrom: 0,
@@ -98,17 +99,18 @@ let indexProtocol = {
 			let calcAvgHash = ''; //sha256 of quote
 			
 			var _tx = [];
+			var _avg = [];
 			
 			_.each(appState.blockStore, function(v){
 				if (v.tx.length > 1){
 					_tx = _tx.concat( v.tx );
+					
+					_avg.push( v.avgQuote );
 				}
 			});
 			
 			//openPrice - avg from open block 
-			var tmp = _.last( appState.blockStore, 1);
-				tmp = tmp.tx;
-				
+			var tmp = _.last( appState.blockStore, 1)[0].tx;
 			var x = 0, y = 0, z = 0;
 				
 				_.each(tmp, function(v){
@@ -117,13 +119,12 @@ let indexProtocol = {
 					z = z + v.total;					
 				});
 				
-			if (x > 0) calcAvg.openPrice = parseFloat( x / tmp.length );
-			if (y > 0) calcAvg.openAmount = parseFloat( y );
-			if (z > 0) calcAvg.openVolume = parseFloat( z );
+			if (x > 0) calcAvg.openPrice = parseInt( x / tmp.length );
+			if (y > 0) calcAvg.openAmount = parseInt( y );
+			if (z > 0) calcAvg.openVolume = parseInt( z );
 			
 			//closePrice - avg from head of store 
-			var tmp = _.first( appState.blockStore, 1);
-			
+			var tmp = _.first( appState.blockStore, 1)[0].tx;
 			var x = 0, y = 0, z = 0;
 				
 				_.each(tmp, function(v){
@@ -132,9 +133,9 @@ let indexProtocol = {
 					z = z + v.total;					
 				});
 				
-			if (x > 0) calcAvg.closePrice = parseFloat( x / tmp.length );
-			if (y > 0) calcAvg.closeAmount = parseFloat( y );
-			if (z > 0) calcAvg.closeVolume = parseFloat( z );
+			if (x > 0) calcAvg.closePrice = parseInt( x / tmp.length );
+			if (y > 0) calcAvg.closeAmount = parseInt( y );
+			if (z > 0) calcAvg.closeVolume = parseInt( z );
 			
 			
 			//avgPrice 
@@ -145,16 +146,35 @@ let indexProtocol = {
 				y = y + v.amount;
 				z = z + v.total;
 
-				txHashes.push( v._hash );				
+				txHashes.push( v._hash );	
+				
+				if (v.excode)
+					calcAvg.exchangesIncluded.push( v.excode );
 			});
 			
-			if (x > 0) calcAvg.avgPrice = parseFloat( x / _tx.length );
-			if (y > 0) calcAvg.totalAmount = parseFloat( y );
-			if (z > 0) calcAvg.totalVolume = parseFloat( z );
+			if (x > 0) calcAvg.avgPrice = parseInt( x / _tx.length );
+			if (y > 0) calcAvg.totalAmount = parseInt( y );
+			if (z > 0) calcAvg.totalVolume = parseInt( z );
+			
+			var min = Number.MAX_SAFE_INTEGER, max = 0;
+			
+			_.each(_avg, function(v){
+				if (v.minPrice < min)
+					min = v.minPrice;
+				
+				if (v.maxPrice > max)
+					max = v.maxPrice;
+			});
+			
+			calcAvg.minPrice = min;
+			calcAvg.maxPrice = max;
 			
 			
+			calcAvg.trxIncluded = _tx.length;			
+			calcAvg.exchangesIncluded = _.uniq( calcAvg.exchangesIncluded, false );
 			
 			
+			appState.dataStore.push( calcAvg );
 			
 			
 			console.debug( calcAvg );
@@ -170,6 +190,7 @@ let server = createServer({
 	//Called once upon genesis
 	initChain: function(request){
 		console.log('Call: InitChain');
+		console.debug( request );
 		
 		if (fs.existsSync( stateFilePath ) === true){		
 			console.log('Old state file exists. Try to delet it');
@@ -193,7 +214,8 @@ let server = createServer({
 
   
   info: function(request) {
-    console.log('INFO request called', request);
+    console.log('INFO request called');
+	console.debug( request );
 	
 	return {
 		data: 'Node.js INDEX Protocol app',
@@ -201,6 +223,20 @@ let server = createServer({
 		//lastBlockAppHash: appState.appHash  //now disable for debug
 	}; 
   }, 
+  
+  setOption: function(request){
+	console.log('setOption request called');
+	console.debug( request );  
+	
+	return { code: 0 };	
+  },
+  
+  query: function(request){
+	console.log('QUERY request called');
+	console.debug( request );  
+	
+	return { code: 0 };
+  },
   
   checkTx: function(request) {
 	
@@ -227,8 +263,8 @@ let server = createServer({
 	let z  = tx.split(':'); //format: CODE:<base64 transaction body>
 	let txType = z[0].toUpperCase();
 	
-	//console.log( tx );
-	//console.debug( z );
+	console.debug( txType );
+	console.debug( z );
 	
 	switch ( txType ){
 		
@@ -239,8 +275,23 @@ let server = createServer({
 			
 			x = JSON.parse( x );
 			
-			if (x)			
+			if (x){			
+				if (x.price < 0)
+					return { code: 1, log: 'CET: Price can not be lover then 0' };
+				
+				if (x.amount =< 0)
+					return { code: 1, log: 'CET: Amount can not be 0 or less' };
+				
+				if (x.total =< 0)
+					return { code: 1, log: 'CET: Total can not be 0 or less' };
+				
+				if (!x.id || x.id == null || x.id == '')
+					return { code: 1, log: 'CET: ID can not be empty' };
+				
+				
+				//all passed OK
 				currentBlockStore.push( x );
+			}
 		}	
     }
 	
@@ -280,8 +331,53 @@ let server = createServer({
 	}
 	
 	//update only non-empty block
-	if (currentBlockStore.length > 0)
-		appState.blockStore.unshift( { Height: hx, tx: currentBlockStore } );
+	if (currentBlockStore.length > 0){
+		//lets calc some avg stat of block 
+		let avgQuote = {
+			blockHeight: hx, 
+			
+			avgPrice: 0,
+			minPrice: 0,
+			maxPrice: 0,
+			
+			vwapPrice: 0,
+			
+			totalVolume: 0,
+			totalAmount: 0,
+			
+			totalTx: currentBlockStore.length,
+			exchangesIncluded: []
+		}
+		
+		var x = 0, y = 0, z = 0, vwap = 0;
+		var p = [];
+			
+		_.each(currentBlockStore, function(v){
+			x = x + v.price;
+			y = y + v.amount;
+			z = z + v.total;
+			
+			vwap = vwap + (v.total); // / fixedExponent);
+			
+			p.push( parseFloat( v.price ) );
+			
+			if (v.excode)
+				avgQuote.exchangesIncluded.push( v.excode );
+		});
+		
+		if (x > 0) avgQuote.avgPrice = parseInt( x / currentBlockStore.length );
+		if (y > 0) avgQuote.totalAmount = parseFloat( y );
+		if (z > 0) avgQuote.totalVolume = parseFloat( z );
+		
+		avgQuote.minPrice = _.min( p );
+		avgQuote.maxPrice = _.max( p );
+		avgQuote.vwapPrice = parseInt( (vwap / avgQuote.totalAmount ) * fixedExponent );
+		
+		avgQuote.exchangesIncluded = _.uniq( avgQuote.exchangesIncluded, false );
+		
+//console.debug( avgQuote );		
+		appState.blockStore.unshift( { Height: hx, tx: currentBlockStore, avgQuote: avgQuote } );
+	}
 	
 	appState.blockHeight = hx;
 	
@@ -289,32 +385,6 @@ let server = createServer({
 	appState.appHash = '';
 	
 	return { code: 0, log: 'endBlock succeeded' };
-	
-	/**
-	if (BlockTx.length > 0){
-		console.log('At block commited: ' + BlockTx.length + ' tx.');
-		
-		//BlockTx.unshift({Height: hx});
-		if (TX.length >= 3 * 3600)	//save to memory only last 3h blocks
-			TX.pop();
-		
-		TX.unshift( { Height: hx.toString(), tx: BlockTx } );
-
-		//save state 
-		redix.hset('TX', hx.toString(), stringify( BlockTx ));
-		
-		TXHash = '';
-		BlockTx = []; //clearing new buffer		
-	}	
-
-	Height = hx;
-	
-	//Run contracts here!
-	contracts.run( parseInt( hx.toString() ) );
-	
-		
-	return { code: 0, log: 'endBlock succeeded' }
-	**/
   },
   
   //Commit msg for each block.
@@ -341,12 +411,14 @@ let server = createServer({
 		fs.writeFileSync( stateFilePath,
 			zlib.gzipSync(Buffer.from(jsonAppState, 'utf8'), {level: 6}), {encoding: 'binary', flag: 'w'});
 		**/
+		const diff = process.hrtime(time);	
+		const time2 = process.hrtime();
 		
 		fs.writeFileSync( stateFilePath, jsonAppState, {encoding: 'utf8', flag: 'w'});
 				
-		const diff = process.hrtime(time);		
+		const diff2 = process.hrtime(time2);		
 		
-		console.log('New appState hash: ' + appHashHex + ', appState save OK to disc ('+prettyHrtime(diff)+')');
+		console.log('New appState hash: ' + appHashHex + ', appState save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+')');
 	}
 	
 	/**
