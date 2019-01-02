@@ -12,9 +12,10 @@
         "start": "node ./indexapp.js"
     },
     "dependencies": {
-        "redis" : "^2.8",
-		"underscore" : "^1.9",
-		"fast-json-stable-stringify" : "^2.0",
-		"abci" : "github:CoinIndexAgency/js-abci"
+		"underscore" 					: "^1.9",
+		"fast-json-stable-stringify" 	: "^2.0",
+		"yieldable-json"				: "^1.0",
+		"pretty-hrtime"					: "^1.0",
+		"abci" 							: "github:CoinIndexAgency/js-abci"
     }
 }
