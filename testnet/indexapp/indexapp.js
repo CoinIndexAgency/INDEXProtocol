@@ -1,18 +1,21 @@
 //Simple test ABCI server for INDEX Protocol Testnet
 
-let createServer 	= require('abci');
+let createServer 	= require('js-abci');
 const crypto 		= require('crypto');
 const { spawn } 	= require('child_process');
 const fs			= require('fs');
 let _				= require('underscore');
-let stringify 		= require('fast-json-stable-stringify');
+//let stringify 		= require('fast-json-stable-stringify');
 var emitter			= require('events');
 const events 		= new emitter();
 var prettyHrtime 	= require('pretty-hrtime');
 const zlib 			= require('zlib');
 
+
 const storeLatestBlocks = 900; //how many blocks decoded and stored
+const storeAvgQuotes = 1 * 3600;
 const fixedExponent = 1000000000;
+const saveAvgStatePeriod = 1; //how blocke before save to disk state
 
 //APP state
 let appState = {
@@ -25,6 +28,8 @@ let appState = {
 	
 	'dataStore'	: []	//filled by transactions	
 };
+
+let saveStateCounter = 0;
 
 let queueToChainStore = []; //local queue to store aggregated quote
 
@@ -148,6 +153,8 @@ let indexProtocol = {
 
 				txHashes.push( v._hash );	
 				
+				//vwap = vwap + v.total
+				
 				if (v.excode)
 					calcAvg.exchangesIncluded.push( v.excode );
 			});
@@ -155,6 +162,9 @@ let indexProtocol = {
 			if (x > 0) calcAvg.avgPrice = parseInt( x / _tx.length );
 			if (y > 0) calcAvg.totalAmount = parseInt( y );
 			if (z > 0) calcAvg.totalVolume = parseInt( z );
+			
+			if (z > 0 && y > 0)
+				calcAvg.vwapPrice = parseInt( ( calcAvg.totalVolume / calcAvg.totalAmount ) * fixedExponent );
 			
 			var min = Number.MAX_SAFE_INTEGER, max = 0;
 			
@@ -173,16 +183,23 @@ let indexProtocol = {
 			calcAvg.trxIncluded = _tx.length;			
 			calcAvg.exchangesIncluded = _.uniq( calcAvg.exchangesIncluded, false );
 			
+			if (appState.dataStore.length == storeAvgQuotes){
+				var tmp = appState.dataStore.pop();
+				delete tmp;
+			}
 			
-			appState.dataStore.push( calcAvg );
+			//todo: store full history to disk db
 			
-			
-			console.debug( calcAvg );
+			appState.dataStore.unshift( calcAvg );
+						
+			//console.debug( calcAvg );
 		}
 	}
 	
 }
 
+let beginBlockTs = 0; // process.hrtime();
+let endBlockTs = 0;
 
 let server = createServer({
 	
@@ -261,17 +278,21 @@ let server = createServer({
 
     let tx = request.tx.toString('utf8'); //'base64'); //Buffer 
 	let z  = tx.split(':'); //format: CODE:<base64 transaction body>
+	
+	if (!tx) return { code: 1, log: 'Wront tx type' };
+	if (!z || z.length != 2) return { code: 1, log: 'Wront tx type' }; 	 
+	
 	let txType = z[0].toUpperCase();
 	
-	console.debug( txType );
-	console.debug( z );
+	//console.debug( txType );
+	//console.debug( z );
 	
 	switch ( txType ){
 		
 		case 'CET': {
 			let x = Buffer.from( z[1], 'base64').toString('utf8');
 			
-			console.log('CET: Cryptocurrency Exchange Trades :: ' + x);
+//			console.log('CET: Cryptocurrency Exchange Trades :: ' + x);
 			
 			x = JSON.parse( x );
 			
@@ -279,20 +300,25 @@ let server = createServer({
 				if (x.price < 0)
 					return { code: 1, log: 'CET: Price can not be lover then 0' };
 				
-				if (x.amount =< 0)
+				if (x.amount <= 0)
 					return { code: 1, log: 'CET: Amount can not be 0 or less' };
 				
-				if (x.total =< 0)
+				if (x.total <= 0)
 					return { code: 1, log: 'CET: Total can not be 0 or less' };
 				
 				if (!x.id || x.id == null || x.id == '')
 					return { code: 1, log: 'CET: ID can not be empty' };
 				
+				delete x._hash;
 				
 				//all passed OK
 				currentBlockStore.push( x );
 			}
-		}	
+		}
+		
+		default: {
+			return { code: 1, log: 'Unknown tx type' };
+		}
     }
 	
     //let number = tx.readUInt32BE(0)
@@ -308,12 +334,14 @@ let server = createServer({
   
   beginBlock: function(request) {
 		
-	console.log('Call: BeginBlock. Height: ' + request.header.height);  
+	//console.log('Call: BeginBlock. Height: ' + request.header.height);  
 	
 	//initial current block store
 	currentBlockStore = [];
+	
+	beginBlockTs = process.hrtime();
 	  
-    return { code: 0, log: 'beginBlock succeeded' }
+    return { code: 0 }
   },
   
   endBlock: function(request){
@@ -323,7 +351,7 @@ let server = createServer({
 	//console.log('ass');
 	
 	let hx = parseInt( request.height.toString() );
-	console.log('Call: EndBlock. Height: ' + hx + ', tx count: ' + currentBlockStore.length); 
+	
 	//console.debug( request ); 
 	
 	if (appState.blockStore.length == storeLatestBlocks){
@@ -373,7 +401,9 @@ let server = createServer({
 		avgQuote.maxPrice = _.max( p );
 		avgQuote.vwapPrice = parseInt( (vwap / avgQuote.totalAmount ) * fixedExponent );
 		
-		avgQuote.exchangesIncluded = _.uniq( avgQuote.exchangesIncluded, false );
+		avgQuote.exchangesIncluded.sort();
+		
+		avgQuote.exchangesIncluded = _.uniq( avgQuote.exchangesIncluded, true );
 		
 //console.debug( avgQuote );		
 		appState.blockStore.unshift( { Height: hx, tx: currentBlockStore, avgQuote: avgQuote } );
@@ -384,6 +414,8 @@ let server = createServer({
 	appState.previousAppHash = appState.appHash;
 	appState.appHash = '';
 	
+	console.log('EndBlock. Height: ' + hx + ', tx count: ' + currentBlockStore.length ); 
+	
 	return { code: 0, log: 'endBlock succeeded' };
   },
   
@@ -393,11 +425,13 @@ let server = createServer({
 	
 	events.emit('blockCommit', appState.blockHeight);
 	
+	endBlockTs = process.hrtime( beginBlockTs ); 
+	
 	if (appState.appHash == ''){
 		const time = process.hrtime();
 		
 		let hash = crypto.createHash('sha256');
-		let jsonAppState = stringify( appState );
+		let jsonAppState = JSON.stringify( appState ); //stringify( appState );
 		
 			hash.update( jsonAppState, 'utf8' );
 		let appHashHex = hash.digest('hex');
@@ -414,11 +448,11 @@ let server = createServer({
 		const diff = process.hrtime(time);	
 		const time2 = process.hrtime();
 		
-		fs.writeFileSync( stateFilePath, jsonAppState, {encoding: 'utf8', flag: 'w'});
+		fs.writeFileSync( stateFilePath, jsonAppState, {encoding: 'binary', flag: 'w'});
 				
-		const diff2 = process.hrtime(time2);		
+		const diff2 = process.hrtime(time2);
 		
-		console.log('New appState hash: ' + appHashHex + ', appState save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+')');
+		console.log('New appState hash: ' + appHashHex + ', appState save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', block: '+ prettyHrtime(endBlockTs)+')');
 	}
 	
 	/**
@@ -468,7 +502,7 @@ server.listen(26658, function(){
 		
 		let data = fs.readFileSync(stateFilePath, {encoding:'utf8'});
 		
-		console.log( data );
+		//console.log( data );
 		
 		if (!data){
 			console.log('Error while reading state file. Please, delete and restart process');

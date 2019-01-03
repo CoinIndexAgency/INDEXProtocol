@@ -12,10 +12,13 @@
         "start": "node ./indexapp.js"
     },
     "dependencies": {
-		"underscore" 					: "^1.9",
-		"fast-json-stable-stringify" 	: "^2.0",
-		"yieldable-json"				: "^1.0",
-		"pretty-hrtime"					: "^1.0",
-		"abci" 							: "github:CoinIndexAgency/js-abci"
-    }
+        "abci": "github:CoinIndexAgency/js-abci",
+        "pretty-hrtime": "^1.0",
+        "underscore": "^1.9",
+        "yieldable-json": "^1.0"
+    },
+	"_unusedDeps":{
+		"rocksdb": "^3.0.3",
+		"fast-json-stable-stringify": "^2.0"
+	}
 }
