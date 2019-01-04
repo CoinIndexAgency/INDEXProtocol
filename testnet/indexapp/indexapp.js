@@ -17,17 +17,16 @@ const storeAvgQuotes = 1 * 3600;
 const fixedExponent = 1000000000;
 const saveAvgStatePeriod = 1; //how blocke before save to disk state
 
-//APP state
-let appState = {
-	'version'		: 'testnet-1',
-	'appVersion'	: 1,	
-	'appHash'		: '', 	//current AppHash (sha-256)
-	'blockHeight'	: 0,	//current height
+var startTendermintNode = true; 
 
-	'blockStore' : [],  //decoded transactions from latest N block
-	
-	'dataStore'	: []	//filled by transactions	
-};
+if (process.argv[2] == 'app')
+	startTendermintNode = false;
+
+/*
+console.log('\n\n');
+console.debug(process.argv);
+console.log('\n\n');
+*/
 
 let saveStateCounter = 0;
 
@@ -43,8 +42,8 @@ let tendermint 		= null; //Tendermint core process
 let indexProtocol = {
 	getDefaultState: function(){
 		return {
-			'version'		: 'testnet-1',
-			'appVersion'	: 1,	
+			'version'		: 'indx-testnet-01',
+			'appVersion'	: 0,	//for testnet app only!
 			'appHash'		: '', 	//current AppHash (sha-256)
 			'previousAppHash' : '',
 			'blockHeight'	: 0,	//current height
@@ -198,6 +197,8 @@ let indexProtocol = {
 	
 }
 
+//APP state
+let appState = indexProtocol.getDefaultState();
 let beginBlockTs = 0; // process.hrtime();
 let endBlockTs = 0;
 
@@ -236,7 +237,7 @@ let server = createServer({
 	
 	return {
 		data: 'Node.js INDEX Protocol app',
-		lastBlockHeight: appState.blockHeight,  
+		lastBlockHeight: 0 //appState.blockHeight 
 		//lastBlockAppHash: appState.appHash  //now disable for debug
 	}; 
   }, 
@@ -274,7 +275,7 @@ let server = createServer({
   deliverTx: function(request) {
 	//console.log('Call: DeliverTx');    
 	//console.debug( request );  
-	//return { code: 1 };
+	//return { code: 0 };
 
     let tx = request.tx.toString('utf8'); //'base64'); //Buffer 
 	let z  = tx.split(':'); //format: CODE:<base64 transaction body>
@@ -309,15 +310,22 @@ let server = createServer({
 				if (!x.id || x.id == null || x.id == '')
 					return { code: 1, log: 'CET: ID can not be empty' };
 				
+				/*
+				if (x.excode && x.excode == 'rightbtc')
+					return { code: 1, log: 'CET: RightBTC Exchange is blocked!' };
+				*/
+				
 				delete x._hash;
 				
 				//all passed OK
 				currentBlockStore.push( x );
 			}
+			
+			break;   
 		}
 		
-		default: {
-			return { code: 1, log: 'Unknown tx type' };
+		default: {	//DEBUG
+			return { code: 0, log: 'Unknown tx type' };
 		}
     }
 	
@@ -472,7 +480,9 @@ let server = createServer({
 	//фиксируем хеш и номер блока
 	//redix.hmset(['appState', 'appHash', appHashHex, 'blockHeight', Height.toString(), 'version', VERION, 'appVersion', APP_VERION]);
 	*/
-	return { code: 0, data: Buffer.from(appState.appHash, 'hex'),  log: 'Commit succeeded' }
+	
+	// Buffer.from(appState.appHash, 'hex')
+	return { code: 0, log: 'Commit succeeded' }
   } 
 
 });
@@ -535,19 +545,26 @@ server.listen(26658, function(){
 	//initial subscribe to events
 	indexProtocol.eventsSubscribe();
 		
-	console.log('ABCI Server started OK');
+	console.log('ABCI Server started OK');	
 	
-	console.log('Tendermint node (full-node, not a Validator) starting...');
+	if (startTendermintNode != false){	
 	
-	tendermint = spawn('/opt/tendermint/tendermint', ['node', '--home=/opt/tendermint']);
+		console.log('Tendermint node (full-node, not a Validator) starting...');
 		
-	tendermint.stdout.on('data', (data) => {
-	  console.log('TC:' + data);
-	});
+		tendermint = spawn('/opt/tendermint/tendermint', ['node', '--home=/opt/tendermint']);
+			
+		tendermint.stdout.on('data', (data) => {
+		  console.log('TC:' + data);
+		});
 
-	tendermint.on('close', (code) => {
-	  console.log('tCore: child process exited with code: ' + code);
-		  
-	  process.exit(1);
-	});	
+		tendermint.on('close', (code) => {
+		  console.log('tCore: child process exited with code: ' + code);
+		  console.log('');
+			  
+		  process.exit(1);
+		});	
+	
+	}
+	else
+		console.log('Running in ABCI-only mode\n');
 });

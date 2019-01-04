@@ -13,13 +13,12 @@
 
 
 
-
 $_t1 = microtime(true);
 
 include('libExchages.php');
 
 //Extra-simple cache db - store last 1000 hashes of trades for each exchange.
-$txCacheDbFile = 'tx.cache.db';
+$txCacheDbFile = './tx.cache.db';
 $txCacheMaxItems = 1000;
 
 //Count of blocks
@@ -32,6 +31,7 @@ $rpcURL = 'http://localhost:8080'; //or http://rpc.testnet.indexprotocol.online
 $txFrom = time() - ((15 * 60) + 60);
 
 $txCache = Array();
+$_txc = Array();
 
 echo date('r') . "  Starting cache tx loading...\n";
 
@@ -106,7 +106,7 @@ echo "At round, we use source: " . implode(', ', $_keys) . "\n";
 //echo "Found: " . count($sourceURL) . " sources.\n";
 
 //float to integer
-$FIXED_DXDY = 1000000000;
+$FIXED_DXDY = 1000000;
 
 foreach($_keys as $ex){
 	$url = $sourceURL[ $ex ]; 
@@ -170,6 +170,9 @@ foreach($_keys as $ex){
 						*/
 						//теперь в HEX-виде представим 
 						//$_tx = bin2hex( pack('H*', base64_encode(json_encode($t))) );
+						
+						if (empty($t['total']) || empty( $t['amount'] ) || empty($t['price']) || $t['price'] < 0 || $t['amount'] < 0)
+							continue;
 						
 						$_tx = 'cet:' . base64_encode(json_encode($t));
 						
