@@ -9,33 +9,149 @@ let _				= require('underscore');
 var emitter			= require('events');
 const events 		= new emitter();
 var prettyHrtime 	= require('pretty-hrtime');
-const zlib 			= require('zlib');
+var rocksdown 		= require('rocksdb');
+var async 			= require('async');
+//const zlib 			= require('zlib');
+//const http 			= require('http');
+//const keepAliveAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 300*1000 });
 
 
 const storeLatestBlocks = 900; //how many blocks decoded and stored
 const storeAvgQuotes = 1 * 3600;
-const fixedExponent = 1000000000;
+const fixedExponent = 1000000;
 const saveAvgStatePeriod = 1; //how blocke before save to disk state
 
 var startTendermintNode = true; 
+const stateDbPath 	= '/opt/tendermint/app/indexapp/db/state'; //stateDb
+const tradesDbPath 	= '/opt/tendermint/app/indexapp/db/trades'; //source quotes
+const dataDbPath  	= '/opt/tendermint/app/indexapp/db/data'; //avg calced quotes
+
+const stateDb 	= rocksdown( stateDbPath ); //stateDb
+const tradesDb 	= rocksdown( tradesDbPath ); //source quotes
+const dataDb  	= rocksdown( dataDbPath ); //avg calced quotes
+
+//options for RocksDB
+const rocksOpt = {
+	createIfMissing: true,
+	errorIfExists: false,
+	compression: true,
+	
+	target_file_size_base: 4 * 1024 * 1024
+};
+
+	async.parallel({
+		stateDb: function(callback) {
+			stateDb.open(rocksOpt, function(err){
+				if (!err){
+					//waiting for status
+					var t = setInterval(function() {
+							if (stateDb.status != 'open') return;
+							
+							console.log('stateDb opened and ready');
+							clearInterval( t );								
+							callback(null, 1);
+						}, 250);
+				}
+				else
+					callback('stateDb opening error: ' + err, 0);
+			});
+		},
+		tradesDb: function(callback) {
+			tradesDb.open(rocksOpt, function(err){
+				if (!err){
+					//waiting for status
+					var t = setInterval(function() {
+							if (tradesDb.status != 'open') return;
+							
+							console.log('tradesDb opened and ready');
+							clearInterval( t );								
+							callback(null, 1);
+						}, 250);
+				}
+				else
+					callback('tradesDb opening error: ' + err, 0);
+			});
+		},
+		dataDb: function(callback) {
+			dataDb.open(rocksOpt, function(err){
+				if (!err){
+					//waiting for status
+					var t = setInterval(function() {
+							if (dataDb.status != 'open') return;
+							
+							console.log('dataDb opened and ready');
+							clearInterval( t );								
+							callback(null, 1);
+						}, 250);
+				}
+				else
+					callback('dataDb opening error: ' + err, 0);
+			});
+		}
+	}, function(err, results) {
+		// results is now equals to: {one: 1, two: 2}
+		if (err){
+			console.log('Error while opening rocksdb instance. Panic error!');
+			process.exit(1);
+		}
+		else {
+			
+			if (process.argv.indexOf('cleandb') != -1){
+				//fs.unlinkSync( stateFilePath );
+				console.log('\n     *** WARNING ***     \n');
+				console.log('Destroy ALL data from application db. All data will be losted!');
+				console.log('Clearing app state...');
+				
+				async.parallel([
+					function(callback){
+						stateDb.destroy( stateDbPath, function(){
+							console.log('stateDb removed at ' + stateDbPath);
+							
+							callback(null);
+						});
+					},
+					function(callback){
+						tradesDb.destroy( tradesDbPath, function(){
+							console.log('tradesDb removed at ' + tradesDbPath);
+							
+							callback(null);
+						});
+					},
+					function(callback){
+						dataDb.destroy( dataDbPath, function(){
+							console.log('dataDb removed at ' + dataDbPath);
+							
+							callback(null);
+						});
+					}],
+					function(err, res){
+						
+						console.log('All app DB cleared and removed... OK');
+						console.log('By!\n');
+						
+						process.exit();
+				});
+			}
+			
+			//OK, all DB ready to work
+			events.emit('dbReady');
+		}
+	});
+	
 
 if (process.argv[2] == 'app')
 	startTendermintNode = false;
 
-/*
-console.log('\n\n');
-console.debug(process.argv);
-console.log('\n\n');
-*/
+var tendermintLogDebug = '';
 
-let saveStateCounter = 0;
-
-let queueToChainStore = []; //local queue to store aggregated quote
-
-let stateFilePath = './indexapp.state.db';
+if (process.argv[2] == 'debug'){
+	
+	tendermintLogDebug = "--log_level='*:debug'"; 
+	
+	console.log('Clearing app state... OK\n');
+}
 
 let currentBlockStore = []; //current unconfirmed block tx
-
 let tendermint 		= null; //Tendermint core process
 
 //test version of lib
@@ -43,7 +159,7 @@ let indexProtocol = {
 	getDefaultState: function(){
 		return {
 			'version'		: 'indx-testnet-01',
-			'appVersion'	: 0,	//for testnet app only!
+			'appVersion'	: '1',	//for testnet app only!
 			'appHash'		: '', 	//current AppHash (sha-256)
 			'previousAppHash' : '',
 			'blockHeight'	: 0,	//current height
@@ -54,19 +170,54 @@ let indexProtocol = {
 		};
 	},
 	
-	clearState: function(){
-		if (fs.existsSync( stateFilePath ) === true){		
-			fs.unlinkSync(stateFilePath);		
+	eventsSubscribe: function(){
+		events.on('blockCommit', indexProtocol.blockCommitHandler);
+		
+		events.on('dbReady', indexProtocol.loadState);
+	},
+	
+	//some handlers
+	loadState: function(){
+		console.log('Reading latest app state from db: ' + stateDbPath);
+	
+		if (stateDb.status == 'open'){
+			//reads All data by separate key
+			let tasks = {};
+			
+			_.each(appState, function(v, i){
+				
+				tasks[ i ] = function(cb){
+					stateDb.get(i, function(err, val){
+						if (!err && val){
+							console.debug( val );
+							
+							cb(null, {i : val});
+						}
+						else
+							cb(err, null);
+					});
+				};		
+			});
+			
+			
+			async.parallel(tasks, function(err, res){
+				if (err) {
+					console.log('Ooops!', err);
+					
+					process.exit(1);
+				}
+				
+				console.debug( res );
+			});
+		}
+		else {
+			console.log('Error, stateDb not ready to work. Status: ' + stateDb.status + '\n');
+			process.exit(1);		
 		}
 	},
 	
-	eventsSubscribe: function(){
-		events.on('blockCommit', indexProtocol.blockCommitHandler);
-	},
 	
 	
-	
-	//some handlers
 	blockCommitHandler: function(height){
 		//if length of blocks more then 900
 		if (appState.blockStore.length == 900){
@@ -96,6 +247,7 @@ let indexProtocol = {
 				timeTo: 0,
 				
 				trxIncluded: 0,
+				blocksIncluded: [],
 				exchangesIncluded: []
 			};
 			
@@ -104,83 +256,88 @@ let indexProtocol = {
 			
 			var _tx = [];
 			var _avg = [];
+			//var _blocks = []; //ids of blocks, included in
 			
 			_.each(appState.blockStore, function(v){
-				if (v.tx.length > 1){
+				if (v.tx.length > 0){
 					_tx = _tx.concat( v.tx );
 					
 					_avg.push( v.avgQuote );
+					
+					calcAvg.blocksIncluded.push( v.Height );
 				}
 			});
 			
-			//openPrice - avg from open block 
-			var tmp = _.last( appState.blockStore, 1)[0].tx;
-			var x = 0, y = 0, z = 0;
+			if (_tx.length != 0){
+			
+				//openPrice - avg from open block 
+				var tmp = _.last( appState.blockStore, 1)[0].tx;
+				var x = 0, y = 0, z = 0;
+					
+					_.each(tmp, function(v){
+						x = x + v.price;
+						y = y + v.amount;
+						z = z + v.total;					
+					});
+					
+				if (x > 0) calcAvg.openPrice = parseInt( x / tmp.length );
+				if (y > 0) calcAvg.openAmount = parseInt( y );
+				if (z > 0) calcAvg.openVolume = parseInt( z );
 				
-				_.each(tmp, function(v){
+				//closePrice - avg from head of store 
+				var tmp = _.first( appState.blockStore, 1)[0].tx;
+				var x = 0, y = 0, z = 0;
+					
+					_.each(tmp, function(v){
+						x = x + v.price;
+						y = y + v.amount;
+						z = z + v.total;					
+					});
+					
+				if (x > 0) calcAvg.closePrice = parseInt( x / tmp.length );
+				if (y > 0) calcAvg.closeAmount = parseInt( y );
+				if (z > 0) calcAvg.closeVolume = parseInt( z );
+				
+				
+				//avgPrice 
+				var x = 0, y = 0, z = 0;
+				
+				_.each(_tx, function(v){
 					x = x + v.price;
 					y = y + v.amount;
-					z = z + v.total;					
-				});
-				
-			if (x > 0) calcAvg.openPrice = parseInt( x / tmp.length );
-			if (y > 0) calcAvg.openAmount = parseInt( y );
-			if (z > 0) calcAvg.openVolume = parseInt( z );
-			
-			//closePrice - avg from head of store 
-			var tmp = _.first( appState.blockStore, 1)[0].tx;
-			var x = 0, y = 0, z = 0;
-				
-				_.each(tmp, function(v){
-					x = x + v.price;
-					y = y + v.amount;
-					z = z + v.total;					
-				});
-				
-			if (x > 0) calcAvg.closePrice = parseInt( x / tmp.length );
-			if (y > 0) calcAvg.closeAmount = parseInt( y );
-			if (z > 0) calcAvg.closeVolume = parseInt( z );
-			
-			
-			//avgPrice 
-			var x = 0, y = 0, z = 0;
-			
-			_.each(_tx, function(v){
-				x = x + v.price;
-				y = y + v.amount;
-				z = z + v.total;
+					z = z + v.total;
 
-				txHashes.push( v._hash );	
+					txHashes.push( v._hash );	
+					
+					//vwap = vwap + v.total
+					
+					if (v.excode)
+						calcAvg.exchangesIncluded.push( v.excode );
+				});
 				
-				//vwap = vwap + v.total
+				if (x > 0) calcAvg.avgPrice = parseInt( x / _tx.length );
+				if (y > 0) calcAvg.totalAmount = parseInt( y );
+				if (z > 0) calcAvg.totalVolume = parseInt( z );
 				
-				if (v.excode)
-					calcAvg.exchangesIncluded.push( v.excode );
-			});
-			
-			if (x > 0) calcAvg.avgPrice = parseInt( x / _tx.length );
-			if (y > 0) calcAvg.totalAmount = parseInt( y );
-			if (z > 0) calcAvg.totalVolume = parseInt( z );
-			
-			if (z > 0 && y > 0)
-				calcAvg.vwapPrice = parseInt( ( calcAvg.totalVolume / calcAvg.totalAmount ) * fixedExponent );
-			
-			var min = Number.MAX_SAFE_INTEGER, max = 0;
-			
-			_.each(_avg, function(v){
-				if (v.minPrice < min)
-					min = v.minPrice;
+				if (z > 0 && y > 0)
+					calcAvg.vwapPrice = parseInt( ( calcAvg.totalVolume / calcAvg.totalAmount ) * fixedExponent );
 				
-				if (v.maxPrice > max)
-					max = v.maxPrice;
-			});
-			
-			calcAvg.minPrice = min;
-			calcAvg.maxPrice = max;
-			
-			
-			calcAvg.trxIncluded = _tx.length;			
-			calcAvg.exchangesIncluded = _.uniq( calcAvg.exchangesIncluded, false );
+				var min = Number.MAX_SAFE_INTEGER, max = 0;
+				
+				_.each(_avg, function(v){
+					if (v.minPrice < min)
+						min = v.minPrice;
+					
+					if (v.maxPrice > max)
+						max = v.maxPrice;
+				});
+				
+				calcAvg.minPrice = min;
+				calcAvg.maxPrice = max;
+				
+				calcAvg.trxIncluded = _tx.length;			
+				calcAvg.exchangesIncluded = _.uniq( calcAvg.exchangesIncluded, false );
+			}
 			
 			if (appState.dataStore.length == storeAvgQuotes){
 				var tmp = appState.dataStore.pop();
@@ -193,7 +350,36 @@ let indexProtocol = {
 						
 			//console.debug( calcAvg );
 		}
-	}
+	},
+	
+	//todo: store at dedicated worker
+	saveResultAsTx: function(txType, data){
+		return;
+		//console.log('SAVE to chain avg data');
+		
+		var _tx = txType + ':' + Buffer.from(data, 'utf8').toString('base64');
+		let _ = new Date().getTime();
+		
+		var _url = 'http://localhost:26657/broadcast_tx_sync?tx="'+_tx+'"&_='+_;
+		
+		//console.log( _url );
+		
+		http.get(_url, {agent: keepAliveAgent}, function(res){  //
+			if (res.statusCode != 200){
+				console.log('Error while AVG broadcast tx (http:' + res.statusCode + ': ' + res.statusMessage + ')');
+			}
+			
+			//console.log( res );
+			
+			//console.log(`STATUS: ${res.statusCode}`);
+			//console.log(`HEADERS: ${JSON.stringify(res.headers)}`);
+			
+		}).on('error', (e) => {
+		  console.error(`Http save Got error: ${e.message}`);
+		});
+		
+		return true;
+	} 
 	
 }
 
@@ -202,19 +388,15 @@ let appState = indexProtocol.getDefaultState();
 let beginBlockTs = 0; // process.hrtime();
 let endBlockTs = 0;
 
+//var _queueToCommit = [];
+
 let server = createServer({
 	
 	//Global initialize network
 	//Called once upon genesis
 	initChain: function(request){
 		console.log('Call: InitChain');
-		console.debug( request );
-		
-		if (fs.existsSync( stateFilePath ) === true){		
-			console.log('Old state file exists. Try to delet it');
-			
-			indexProtocol.clearState();
-		}
+		console.log('Please, destroy ALL older data, call <node app.js cleandb>');
 		
 		let chainId = request.chainId;
 		
@@ -231,126 +413,157 @@ let server = createServer({
 	},	
 
   
-  info: function(request) {
-    console.log('INFO request called');
-	console.debug( request );
-	
-	return {
-		data: 'Node.js INDEX Protocol app',
-		lastBlockHeight: 0 //appState.blockHeight 
-		//lastBlockAppHash: appState.appHash  //now disable for debug
-	}; 
-  }, 
-  
-  setOption: function(request){
-	console.log('setOption request called');
-	console.debug( request );  
-	
-	return { code: 0 };	
-  },
-  
-  query: function(request){
-	console.log('QUERY request called');
-	console.debug( request );  
-	
-	return { code: 0 };
-  },
-  
-  checkTx: function(request) {
-	
-	
-	//console.log('Call: CheckTx');   
-	//console.debug( request );  
-	
-	//return { code: 1 };
-	  
-   // let tx = request.tx;
-   // let number = tx.readUInt32BE(0)
-   // if (number !== state.count) {
-   //   return { code: 1, log: 'tx does not match count' }
-   // }
-    return { code: 0, log: 'tx succeeded' }
-  },
+	info: function(request) {
+		console.log('INFO request called');
+		console.debug( request );
 
-  deliverTx: function(request) {
-	//console.log('Call: DeliverTx');    
-	//console.debug( request );  
-	//return { code: 0 };
+		return {
+			data: 'Node.js INDEX Protocol app',
+			version: appState.version, 
+			appVersion: appState.appVersion,
+			lastBlockHeight: appState.blockHeight 
+			//lastBlockAppHash: appState.appHash  //now disable for debug
+		}; 
+	}, 
+  
+	setOption: function(request){
+		console.log('setOption request called');
+		console.debug( request );  
 
-    let tx = request.tx.toString('utf8'); //'base64'); //Buffer 
-	let z  = tx.split(':'); //format: CODE:<base64 transaction body>
-	
-	if (!tx) return { code: 1, log: 'Wront tx type' };
-	if (!z || z.length != 2) return { code: 1, log: 'Wront tx type' }; 	 
-	
-	let txType = z[0].toUpperCase();
-	
-	//console.debug( txType );
-	//console.debug( z );
-	
-	switch ( txType ){
-		
-		case 'CET': {
-			let x = Buffer.from( z[1], 'base64').toString('utf8');
+		return { code: 0 };	
+	},
+
+	query: function(request){
+		console.log('QUERY request called');
+		console.debug( request );  
+
+		return { code: 0 };
+	},
+  
+	checkTx: function(request) {
+		//console.log('Call: CheckTx');   
+		//console.debug( request );  
+
+		//return { code: 1 };
+		  
+		// let tx = request.tx;
+		// let number = tx.readUInt32BE(0)
+		// if (number !== state.count) {
+		//   return { code: 1, log: 'tx does not match count' }
+		// }
+		return { code: 0, log: 'tx succeeded' }
+	},
+
+	deliverTx: function(request) {
+		//console.log('Call: DeliverTx');    
+		//console.debug( request );  
+		//return { code: 0 };
+
+		let tx = request.tx.toString('utf8'); //'base64'); //Buffer 
+		let z  = tx.split(':'); //format: CODE:<base64 transaction body>
+
+		if (!tx) return { code: 0, log: 'Wrong tx type' };
+		if (!z || z.length != 2) return { code: 0, log: 'Wrong tx type' }; 	 
+
+		let txType = z[0].toUpperCase();
+
+		//console.debug( txType );
+		//console.debug( z );
+
+		switch ( txType ){
 			
-//			console.log('CET: Cryptocurrency Exchange Trades :: ' + x);
-			
-			x = JSON.parse( x );
-			
-			if (x){			
-				if (x.price < 0)
-					return { code: 1, log: 'CET: Price can not be lover then 0' };
+			case 'CET': {
+				let _x = Buffer.from( z[1], 'base64').toString('utf8');
 				
-				if (x.amount <= 0)
-					return { code: 1, log: 'CET: Amount can not be 0 or less' };
+		//			console.log('CET: Cryptocurrency Exchange Trades :: ' + _x);
 				
-				if (x.total <= 0)
-					return { code: 1, log: 'CET: Total can not be 0 or less' };
+				var x = JSON.parse( _x );
 				
-				if (!x.id || x.id == null || x.id == '')
-					return { code: 1, log: 'CET: ID can not be empty' };
+				if (x){			
+					if (x.price < 0)
+						return { code: 0, log: 'CET: Price can not be lover then 0 :: ' + _x };
+					
+					if (x.amount <= 0)
+						return { code: 0, log: 'CET: Amount can not be 0 or less :: ' + _x  };
+					
+					if (x.total <= 0)
+						return { code: 0, log: 'CET: Total can not be 0 or less :: ' + _x  };
+					
+					if (!x.id || x.id == null || x.id == '')
+						return { code: 0, log: 'CET: ID can not be empty :: ' + _x  };    
+					
+					/*
+					if (x.excode && x.excode == 'bitfinex')
+						return { code: 1, log: 'CET: bitfinex Exchange is blocked!' };
+					*/
+					
+					delete x._hash;
+					
+					//all passed OK
+					currentBlockStore.push( x );
+				}
 				
-				/*
-				if (x.excode && x.excode == 'rightbtc')
-					return { code: 1, log: 'CET: RightBTC Exchange is blocked!' };
-				*/
-				
-				delete x._hash;
-				
-				//all passed OK
-				currentBlockStore.push( x );
+				break;   
 			}
 			
-			break;   
+			case 'AVG': {
+				//console.log('AVG: Calc Rates :: ' + z[1]);
+				
+				
+				let _x = Buffer.from( z[1], 'base64').toString('utf8');
+				
+				var x = JSON.parse( _x );
+				
+				if (x){
+				
+					console.log('AVG: Calc Rates commited for height ' + x.blockHeight + ' (diff: ' + (appState.blockHeight - x.blockHeight) + ')');
+				
+				}
+				
+				break;
+			}
+			
+			default: {	//DEBUG
+				return { code: 0, log: 'Unknown tx type' };
+			}
 		}
-		
-		default: {	//DEBUG
-			return { code: 0, log: 'Unknown tx type' };
-		}
-    }
-	
-    //let number = tx.readUInt32BE(0)
-    //if (number !== state.count) {
-    //  return { code: 1, log: 'tx does not match count' }
-    //}
 
-    // update state
-   // state.count += 1
+		//let number = tx.readUInt32BE(0)
+		//if (number !== state.count) {
+		//  return { code: 1, log: 'tx does not match count' }
+		//}
 
-    return { code: 0, log: 'tx succeeded' }
-  },
+		// update state
+		// state.count += 1
+
+		return { code: 0, log: 'tx succeeded' };
+	},
   
-  beginBlock: function(request) {
+	beginBlock: function(request) {
+			
+		//console.log('Call: BeginBlock. Height: ' + request.header.height);  
+
+		//initial current block store
+		currentBlockStore = [];
+
+		beginBlockTs = process.hrtime();
 		
-	//console.log('Call: BeginBlock. Height: ' + request.header.height);  
-	
-	//initial current block store
-	currentBlockStore = [];
-	
-	beginBlockTs = process.hrtime();
-	  
-    return { code: 0 }
-  },
+		//async save latest data 
+		if (appState.dataStore.length > 0){
+			var data = appState.dataStore[0];
+			
+			//console.log('\n\n');
+			//console.log( data );
+			//console.log( ' data.blockHeight == appState.blockHeight ); 
+			//console.log('\n\n');
+			
+			if (data && data.blockHeight == appState.blockHeight){
+				indexProtocol.saveResultAsTx('avg', JSON.stringify(data));
+			}
+		}
+		  
+		return { code: 0 };
+	},
   
   endBlock: function(request){
 	//let req = request.toString(
@@ -416,6 +629,8 @@ let server = createServer({
 //console.debug( avgQuote );		
 		appState.blockStore.unshift( { Height: hx, tx: currentBlockStore, avgQuote: avgQuote } );
 	}
+	else
+		appState.blockStore.unshift( { Height: hx, tx: currentBlockStore, avgQuote: null } );
 	
 	appState.blockHeight = hx;
 	
@@ -456,7 +671,7 @@ let server = createServer({
 		const diff = process.hrtime(time);	
 		const time2 = process.hrtime();
 		
-		fs.writeFileSync( stateFilePath, jsonAppState, {encoding: 'binary', flag: 'w'});
+		//test fs.writeFileSync( stateFilePath, jsonAppState, {encoding: 'utf8', flag: 'w'});
 				
 		const diff2 = process.hrtime(time2);
 		
@@ -489,23 +704,27 @@ let server = createServer({
 
 //=== Debug
 setInterval(function(){
-	
+	/*
 	console.log('\n');
 	
 	console.dir( appState , {depth:4, colors: true });
 	
 	console.log('\n');
+	*/
 	
-	
-}, 30000);
+}, 60000);
 //===
 
+//initial subscribe to events
+indexProtocol.eventsSubscribe();
 
 console.log('ABCI Server starting...');
 
 server.listen(26658, function(){
-	console.log('Reading latest app state from disk snapshot (file: ./indexapp.state.db)');
 	
+	
+
+/***	
 	//read sync from disc
 	if (fs.existsSync( stateFilePath ) === true){
 		console.log('State file exists.');
@@ -541,17 +760,17 @@ server.listen(26658, function(){
 		console.log('State file NOT exists! May be first run? ');
 		console.log('All App state restore from chain (maybe loang time!)');
 	}
+*/	
 	
-	//initial subscribe to events
-	indexProtocol.eventsSubscribe();
-		
+
+/**	
 	console.log('ABCI Server started OK');	
 	
 	if (startTendermintNode != false){	
 	
 		console.log('Tendermint node (full-node, not a Validator) starting...');
-		
-		tendermint = spawn('/opt/tendermint/tendermint', ['node', '--home=/opt/tendermint']);
+		// tendermintLogDebug
+		tendermint = spawn('/opt/tendermint/tendermint', ['node', '--home=/opt/tendermint']); // , "--log_level='*:debug'"
 			
 		tendermint.stdout.on('data', (data) => {
 		  console.log('TC:' + data);
@@ -567,4 +786,5 @@ server.listen(26658, function(){
 	}
 	else
 		console.log('Running in ABCI-only mode\n');
+**/
 });

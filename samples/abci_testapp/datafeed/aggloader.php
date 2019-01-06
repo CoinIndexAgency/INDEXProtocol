@@ -1,10 +1,9 @@
 <?php 
-//Used libExchange provided by CoinIndex Ltd.
-//For test, use only BTC/USD trading pair from some exchanges
+// Load BTC/USD from aggregators
 
 	//prevent double running
 	$__outp = Array();	
-	exec('ps ax|grep "[f]eedloader.php"', $__outp);
+	exec('ps ax|grep "[a]aggloader.php"', $__outp);
 	
 	if (count($__outp) > 2){
 		echo "WARN: Another process has running...exit\n";
@@ -17,75 +16,42 @@ $_t1 = microtime(true);
 
 include('libExchages.php');
 
-//Extra-simple cache db - store last 1000 hashes of trades for each exchange.
-$txCacheDbFile = './tx.cache.db';
-$txCacheMaxItems = 1000;
-
-//Count of blocks
-$countPerBlock = 13; 
-
 //RPC URL
 $rpcURL = 'http://localhost:8080'; //or http://rpc.testnet.indexprotocol.online
 
 //store only trx last 15 min (and 1 min diff delay)
 $txFrom = time() - ((15 * 60) + 60);
 
-$txCache = Array();
-$_txc = Array();
-
-echo date('r') . "  Starting cache tx loading...\n";
-
-if (file_exists( $txCacheDbFile )){
-	$_txc = explode("\n", file_get_contents( $txCacheDbFile ));
-	
-	foreach($_txc as $x){
-		$z = explode('::', $x);
-		
-		if (!empty($z[0]) && !empty($z[1])){
-			$txCache[ $z[0] ] = explode(';', $z[1]);
-			
-			echo $z[0] . " cached " . count( $txCache[ $z[0] ] ) . "\n";
-		}
-	}
-}
-
-echo "\n" . date('r') . "  Cache tx loaded OK (items: ".count($_txc).")\n\n";
-
 $resURL = Array();
 
 //base sources
 $sourceURL = Array(
-	'CEX.io' 	=>	'https://cex.io/api/trade_history/BTC/USD/',
-	'BTC-Alpha' =>	'https://btc-alpha.com/api/v1/exchanges/?format=json&limit=250&pair=BTC_USD',
-	'Bitfinex' 	=>	'https://api.bitfinex.com/v1/trades/btcusd?limit_trades=250',
-	'Quoine'	=>	'https://api.quoine.com/executions?product_id=1&limit=1000&page=1',
-	'GDAX'		=>	'https://api.gdax.com/products/BTC-USD/trades?limit=100',
-	'HitBTC'	=>	'https://api.hitbtc.com/api/2/public/trades/BTCUSD?limit=250',
-	'Bitstamp'	=>	'https://www.bitstamp.net/api/v2/transactions/btcusd/?time=hour',
-	'Gemini'	=>	'https://api.gemini.com/v1/trades/btcusd?limit_trades=250&include_breaks=0',
-	'LakeBTC'	=>	'https://api.lakebtc.com/api_v2/bctrades?symbol=btcusd',
-	'Exmo'		=>	'https://api.exmo.com/v1/trades/?pair=BTC_USD',
-	'CoinsBank'	=>	'https://coinsbank.com/api/bitcoincharts/trades/BTCUSD',
-	'BitBay'	=>	'https://bitbay.net/API/Public/BTCUSD/trades.json?sort=desc',
-	'QuadrigaCX'	=>	'https://api.quadrigacx.com/v2/transactions?book=btc_usd&time=hour',
-	'Livecoin'	=>	'https://api.livecoin.net/exchange/last_trades?currencyPair=BTC/USD&minutesOrHour=false',
-	'itBit'		=>	'https://api.itbit.com/v1/markets/XBTUSD/trades',
-	'OkCoin/Intl'	=>	'https://www.okcoin.com/api/v1/trades.do?symbol=btc_usd',
-	'Independent Reserve'	=>	'https://api.independentreserve.com/Public/GetRecentTrades?primaryCurrencyCode=xbt&secondaryCurrencyCode=usd&numberOfRecentTradesToRetrieve=50',
-	'DSX'	=>	'https://dsx.uk/mapi/trades/btcusd',
-	'Gatecoin'	=>	'https://api.gatecoin.com/Public/Transactions/BTCUSD?Count=250',
-	'Waves DEX'	=>	'http://marketdata.wavesplatform.com/api/trades/BTC/USD/100',
-	'Abucoins'	=>	'https://api.abucoins.com/products/BTC-USD/trades?limit=200',
-	'Bitsane'	=>	'https://bitsane.com/api/public/trades?pair=BTC_USD&limit=250',
-	'Bitex.la'	=>	'https://bitex.la/api-v1/rest/btc_usd/market/transactions',
-	'Bitlish'	=>	'https://bitlish.com/api/v1/trades_history?pair_id=btcusd',
-	'SouthXchange'	=>	'https://www.southxchange.com/api/trades/BTC/USD',
-	'Bisq'	=>	'https://markets.bisq.network/api/trades?market=btc_usd&limit=250&format=json&sort=desc',
-	'Coingi'	=>	'https://api.coingi.com/current/transactions/btc-usd/250',
-	'LEOxChange'	=>	'https://restapi.leoxchange.com/Ticker/TradeHistory?coinPair=BTC/USD&rows=100',
-	'Cobinhood'		=>	'https://api.cobinhood.com/v1/market/trades/BTC-USD?limit=50',
-	'CoinbasePro'	=>	'https://api.pro.coinbase.com/products/BTC-USD/trades',
-	'RightBTC'	=>	'https://www.rightbtc.com/api/public/trades/BTCUSD/100'
+	'CoinMarketCap' 	=>	'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=BTC&convert=USD&CMC_PRO_API_KEY=c3ce21bb-20b0-41f9-85d0-762a38db9d2b',
+	
+	'CryptoCompare' => 'https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD&api_key=1a9487d03903a0852438c742ec8b33e86baf98bbbd4f33846070860c5fd13404',
+
+	'Nomics' => 'https://api.nomics.com/v1/prices?key=891493ad39f33e571878d36cc6a97594',
+	
+	'CoinLore' => 'https://api.coinlore.com/api/ticker/?id=90',
+	
+	'ChasingCoins' => 'https://chasing-coins.com/api/v1/convert/BTC/USD',
+	
+	'CoinGecko'	=> 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd', 
+	
+	'BitcoinAverage' => 'https://apiv2.bitcoinaverage.com/indices/global/ticker/BTCUSD',
+	
+	'Cryptonator' => 'https://api.cryptonator.com/api/ticker/btc-usd',
+	
+	'Bitpay'	=> 'https://bitpay.com/rates/BTC/USD'
+	
+	//'Coinpaprika' => 'https://api.coinpaprika.com/v1/'
+	
+	
+	//'bitdataset' => 'http://api.bitdataset.com/v1/quotes/current/BTC?apikey=4c757578-f110-49a0-8694-1e1abf494fb6'
+	
+	//Auth by Headers 'BlockMarkets' => ''   lzevk3tgd93WSB1C9L44O2Xy0Y2u0zPN2suvG1vv
+	
+	//'CoinApi' => 'https://rest.coinapi.io//v1/quotes/SPOT_BTC_USD/current?apikey=592BB7D7-8D99-4DD6-8CC6-8EA38EB5C641
 );
 
 //temporary disabled
