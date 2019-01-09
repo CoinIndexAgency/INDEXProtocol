@@ -5,22 +5,16 @@ const crypto 		= require('crypto');
 const { spawn } 	= require('child_process');
 const fs			= require('fs');
 let _				= require('underscore');
-//let stringify 		= require('fast-json-stable-stringify');
 var emitter			= require('events');
 const events 		= new emitter();
 var prettyHrtime 	= require('pretty-hrtime');
 var rocksdown 		= require('rocksdb');
 var async 			= require('async');
-//const zlib 			= require('zlib');
-//const http 			= require('http');
-//const keepAliveAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 300*1000 });
 
 process.on('uncaughtException', (err) => {
   console.log('\n     *** ERROR ***   \n ' + err);
   
   if (stateDb && stateDb.status == 'open')	stateDb.close(function(){});
-  if (tradesDb && tradesDb.status == 'open')	tradesDb.close(function(){});
-  //if (dataDb && dataDb.status == 'open')	dataDb.close(function(){});
   
   console.log('\n');  
   
@@ -32,38 +26,37 @@ process.on('exit', (code) => {
 		console.log('App exit with code: ' + code);
 		
 		if (stateDb && stateDb.status == 'open')	stateDb.close(function(){});
-		if (tradesDb && tradesDb.status == 'open')	tradesDb.close(function(){});
-		//if (dataDb && dataDb.status == 'open')	dataDb.close(function(){});
-		
+
 		console.log('\n');
 	}
 });
 
-
-
+//test private key for system account
+const godKey = '178194397bd5290a6322c96ea2ff61b65af792397fa9d02ff21dedf13ee9bb33';
 const storeLatestBlocks = 900; //how many blocks decoded and stored
-//const storeAvgQuotes = 1 * 3600; //from last hour
 const fixedExponent = 1000000;
 
-var startTendermintNode = false; 
 const stateDbPath 	= '/opt/tendermint/app/db/state.db'; //stateDb
-const tradesDbPath 	= '/opt/tendermint/app/db/trades.db'; //source quotes
-//const dataDbPath  	= '/opt/tendermint/app/indexapp/db/data'; //avg calced quotes
 
 	if (process.argv.indexOf('cleandb') != -1){
 		console.log('\n     *** WARNING ***     \n');
 		console.log('Destroy ALL data from application db. All data will be losted!');
 		console.log('Clearing app state...');
-				
+			
+		let dir = fs.readdirSync( stateDbPath );
+		
+		_.each(dir, function(f){
+			console.log('remove file: ' + f + '... ok');
+			
+			fs.unlinkSync( stateDbPath + '/' + f);			
+		});
+		
 		fs.rmdirSync( stateDbPath );
-		fs.rmdirSync( tradesDbPath );
-				
+						
 		console.log('All app DB cleared and removed... OK\n\n');
 	}
 
-const stateDb 	= rocksdown( stateDbPath ); //stateDb
-const tradesDb 	= rocksdown( tradesDbPath ); //source quotes
-//const dataDb  	= rocksdown( dataDbPath ); //avg calced quotes
+const stateDb 	= rocksdown( stateDbPath );
 
 //options for RocksDB
 const rocksOpt = {
@@ -74,82 +67,27 @@ const rocksOpt = {
 	target_file_size_base: 4 * 1024 * 1024
 };
 
-	async.parallel({
-		stateDb: function(callback) {
-			stateDb.open(rocksOpt, function(err){
-				if (!err){
-					//waiting for status
-					var t = setInterval(function() {
-							if (stateDb.status != 'open') return;
-							
-							console.log('stateDb opened and ready');
-							clearInterval( t );								
-							callback(null, 1);
-						}, 250);
-				}
-				else
-					callback('stateDb opening error: ' + err, 0);
-			});
-		},
-		tradesDb: function(callback) {
-			tradesDb.open(rocksOpt, function(err){
-				if (!err){
-					//waiting for status
-					var t = setInterval(function() {
-							if (tradesDb.status != 'open') return;
-							
-							console.log('tradesDb opened and ready');
-							clearInterval( t );								
-							callback(null, 1);
-						}, 250);
-				}
-				else
-					callback('tradesDb opening error: ' + err, 0);
-			});
-		}/**,
-		dataDb: function(callback) {
-			dataDb.open(rocksOpt, function(err){
-				if (!err){
-					//waiting for status
-					var t = setInterval(function() {
-							if (dataDb.status != 'open') return;
-							
-							console.log('dataDb opened and ready');
-							clearInterval( t );								
-							callback(null, 1);
-						}, 250);
-				}
-				else
-					callback('dataDb opening error: ' + err, 0);
-			});
-		} **/
-	}, function(err, results) {
-		// results is now equals to: {one: 1, two: 2}
-		if (err){
-			console.log('Error while opening rocksdb instance. Panic error!');
-			process.exit(1);
+	stateDb.open(rocksOpt, function(err){
+		if (!err){
+			//waiting for status
+			var t = setInterval(function() {
+				if (stateDb.status != 'open') return;
+				
+				console.log('stateDb opened and ready');
+				clearInterval( t );								
+				
+				//OK, all DB ready to work
+				events.emit('dbReady');
+			
+			}, 100);
 		}
 		else {
-			//OK, all DB ready to work
-			events.emit('dbReady');
+			console.log('stateDb opening error: ' + err);
+			process.exit(0);
 		}
 	});
 	
-
-if (process.argv[2] == 'app')
-	startTendermintNode = false;
-
-var tendermintLogDebug = '';
-
-if (process.argv[2] == 'debug'){
-	
-	tendermintLogDebug = "--log_level='*:debug'"; 
-	
-	console.log('Clearing app state... OK\n');
-}
-
 let currentBlockStore = []; //current unconfirmed block tx
-let tendermint 		= null; //Tendermint core process
 
 //test version of lib
 let indexProtocol = {
@@ -158,23 +96,59 @@ let indexProtocol = {
 			'version'		: 'indx-testnet-01',
 			'appVersion'	: '1',	//for testnet app only!
 			'appHash'		: '', 	//current AppHash (sha-256)
-			'previousAppHash' : '',
-			'blockHeight'	: 0,	//current height
 			
+			'blockHeight'	: 0,	//current height
 			'blockStore' 	: [],  //filled by transactions (by 900 block)
 			
-			'dataStore'		: null	//latest avg data	
+			'previousAppHash' : '',
+			'latestAvg'		: null,	//latest avg data	
+			
+			// !!!!!!!!!!! prototype 
+			'assetStore'	:	{
+				/*'IDXT': {
+					registerAt: 1547054555444,
+					regBlockHeight: 0,
+					initial: 1000000,
+					type: 'coin', //coin for native coin, token for user assets, contract - for derivative contracts
+					divide: 10,
+					maxSupply: 10000000000,
+					emission: 25, //emission per block
+					owner: '28kCp5BWu2f1qsB582EkmkeJisHa', //address of emitent
+										
+					tx: []
+				}*/
+			}, //symbols registry DB
+			'accountStore'	:	{
+				/*'28kCp5BWu2f1qsB582EkmkeJisHa' : {
+					name: 'raiden@coinindex.agency', //main name of account
+					altNames:[], //array of alternative names (added by scecial trx)
+					createdAt: 1547054555443,
+					createdBlockHeight: 0,
+					status: 'open',
+					type: 'user',
+					nonce: 0,
+					pubKey: '04145da5f0ec89ffd9c8e47758e922d26b472d9e81327e16e649ab78f5ab259977756ceb5338dd0eddcff8633043b53b25b877b79f28f1d70f9b837ffaca315179',
+					
+					assets:{
+						'IDXT' : {	//default, base coin of network
+							amount: 10000000 //amount (*divider)
+						}
+					},
+					
+					tx: []
+				}*/
+			} //user accounts
 		};
 	},
 	
 	eventsSubscribe: function(){
-		events.on('blockCommit', indexProtocol.blockCommitHandler);
+		//events.on('blockCommit', indexProtocol.blockCommitHandler);
 		
 		events.on('dbReady', indexProtocol.loadState);
 		
-		events.on('appStateRestored', indexProtocol.startTendermintNode);
+		//events.on('appStateRestored', indexProtocol.startTendermintNode);
 		
-		events.on('nodeStarted', indexProtocol.startAbciServer);
+		events.on('appStateRestored', indexProtocol.startAbciServer);
 	},
 	
 	//some handlers
@@ -182,69 +156,59 @@ let indexProtocol = {
 		console.log('Reading latest app state from db: ' + stateDbPath + '\n');
 	
 		if (stateDb.status == 'open'){
-			//reads All data by separate key
-			let tasks = {};
-						
-			_.each(appState, function(v, i){
-				
-				tasks[ i ] = function(cb){
-					stateDb.get(i, function(err, val){
-						//console.dir( err, {depth:4, colors: true } );
-						
-						if (!err && val){
-							
-							if (Buffer.isBuffer(val)){
-								val = val.toString('utf8');								
-							}
-													
-							//console.debug( [i, val] );
-							
-							cb(null, val);
-						}
-						else
-						if (err && err.toString() == 'Error: NotFound: '){
-							console.log('appState.' + i + ' revert to default val: '+appState[i]+'');
-							
-							cb(null, appState[i]);
-						}
-						else
-							cb(err, null);
-					});
-				};		
-			});
-			
-			
-			async.parallel(tasks, function(err, res){
-				if (err) {
-					console.log('Ooops!', err);
+			stateDb.get('appState', function(err, val){
+				if (!err && val){
+					console.log('Recover appState from disk... OK');
 					
-					process.exit(1);
-				}
-				
-				_.each(res, function(val, i){
-					if (['blockStore', 'dataStore'].indexOf( i ) != -1){
-						
-						if (!_.isEmpty(val))
-							val = JSON.parse( val );
-					} 
-					
-					if (['appVersion', 'blockHeight'].indexOf( i ) != -1){
-						val = parseInt( val );
+					if (Buffer.isBuffer(val)){
+						val = val.toString('utf8');								
 					}
 					
-					appState[ i ] = val;
-				});
-				
-				//calc new state
-				appState.appHash = indexProtocol.calcStateHash(); 
-				
-				console.log('hash: ' + appState.appHash + '\nprev: ' + appState.previousAppHash);
-				console.log('appState restored... OK');			
-				
-				events.emit('appStateRestored');
-				
-				//console.debug( res );
+					val = JSON.parse( val );
+					
+					_.each(val, function(v, i){
+						appState[ i ] = v;
+					});
+					
+					//check it 
+					let calcAppHash = indexProtocol.calcHash( JSON.stringify(appState), false);
+					
+					//load last appHash 
+					stateDb.get('appHash', function(err, val){
+						if (!err && val && Buffer.isBuffer(val)){
+							let loadedAppHash = val.toString('utf8');			
+
+							console.log('Checking hash integrity...');
+							console.log('loaded AppHash: ' + loadedAppHash);
+							console.log('rehash AppHash: ' + calcAppHash);
+							
+							if (loadedAppHash === calcAppHash){
+								appState.appHash = calcAppHash;
+								
+								console.log('State loaded OK\n');
+								
+								events.emit('appStateRestored');								
+							}
+							else {
+								console.log('Error while appState loaded. Inconsistent data.');
+								
+								process.exit(0);						
+							}
+						}							
+					});					
+				}
+				else 
+				if (err && err.toString() == 'Error: NotFound: '){
+					
+					appState = indexProtocol.getDefaultState();					
+					
+					console.log('appState revert to default values');
+					
+					events.emit('appStateRestored');
+				}
 			});
+
+	
 		}
 		else {
 			console.log('Error, stateDb not ready to work. Status: ' + stateDb.status + '\n');
@@ -252,14 +216,20 @@ let indexProtocol = {
 		}
 	},
 	
-	calcStateHash: function(){
+	calcHash: function( data, returnRaw ){
+		if (!data)
+			data = '';
+		
 		let hash = crypto.createHash('sha256');
-			hash.update( /*JSON.stringify(appState)*/ '', 'utf8' );
-		let appHashHex = hash.digest('hex');
-			
-		return appHashHex;
+			hash.update( /*JSON.stringify(appState)*/ data, 'utf8' );
+		
+		if (returnRaw === true)
+			return hash;
+		else
+			return hash.digest('hex');
 	},
 	
+	/**
 	startTendermintNode: function(){
 		
 		if (startTendermintNode != false){	
@@ -284,7 +254,7 @@ let indexProtocol = {
 		events.emit('nodeStarted');
 		
 	},
-	
+	**/
 	startAbciServer: function(){
 		console.log('ABCI Server starting...');
 
@@ -300,7 +270,7 @@ let indexProtocol = {
 		if (appState.blockStore.length == 900){
 			
 			let calcAvg = {
-				symbol: 'BTC/USD',
+				symbol: 'BTC/USD',	//for testnet only
 				
 				blockHeight: height, 
 				
@@ -320,30 +290,35 @@ let indexProtocol = {
 				
 				vwapPrice: 0,
 				
-				timeFrom: 0,
-				timeTo: 0,
+				timeFrom: 0, //reserved
+				timeTo: 0,  //reserved
 				
-				trxIncluded: 0,
+				totalTx: 0,
 				//blocksIncluded: [], test performance
 				exchangesIncluded: []
 			};
 			
-			//let txHashes = []; //hashes of all tx 
-			let calcAvgHash = ''; //sha256 of quote
-			
 			var _tx = [];
-			var _avg = [];
-			//var _blocks = []; //ids of blocks, included in
+			var _minPrice = null, _maxPrice = null;
 			
 			_.each(appState.blockStore, function(v){
 				if (v.tx.length > 0){
 					_tx = _tx.concat( v.tx );
 					
-					_avg.push( v.avgQuote );
-					
-					//calcAvg.blocksIncluded.push( v.Height );
+					if (v.avgQuote){
+						if (_minPrice == null || v.avgQuote.minPrice < _minPrice){
+							_minPrice = v.avgQuote.minPrice;
+						}
+						
+						if (_maxPrice == null || v.avgQuote.maxPrice > _maxPrice){
+							_maxPrice = v.avgQuote.maxPrice;
+						}
+					}
 				}
 			});
+			
+			calcAvg.minPrice = _minPrice;
+			calcAvg.maxPrice = _maxPrice;
 			
 			if (_tx.length != 0){
 			
@@ -383,10 +358,6 @@ let indexProtocol = {
 					x = x + v.price;
 					y = y + v.amount;
 					z = z + v.total;
-
-					//txHashes.push( v._hash );	
-					
-					//vwap = vwap + v.total
 					
 					if (v.excode)
 						calcAvg.exchangesIncluded.push( v.excode );
@@ -399,52 +370,16 @@ let indexProtocol = {
 				if (z > 0 && y > 0)
 					calcAvg.vwapPrice = parseInt( ( calcAvg.totalVolume / calcAvg.totalAmount ) * fixedExponent );
 				
-				var min = Number.MAX_SAFE_INTEGER, max = 0;
+				calcAvg.totalTx = _tx.length;
 				
-				_.each(_avg, function(v){
-					if (v.minPrice < min)
-						min = v.minPrice;
-					
-					if (v.maxPrice > max)
-						max = v.maxPrice;
-				});
-				
-				calcAvg.minPrice = min;
-				calcAvg.maxPrice = max;
-				
-				calcAvg.trxIncluded = _tx.length;			
-				calcAvg.exchangesIncluded = _.uniq( calcAvg.exchangesIncluded, false );
+				if (calcAvg.exchangesIncluded > 1){
+					calcAvg.exchangesIncluded.sort();
+					calcAvg.exchangesIncluded = _.uniq( calcAvg.exchangesIncluded, true );
+				}
 			}
 			
-			/*
-			if (appState.dataStore.length == storeAvgQuotes){
-				var tmp = appState.dataStore.pop();
-				delete tmp;
-			}
-			*/
-			
-			appState.dataStore = calcAvg;
-		}
-	},
-	
-	//save new data 
-	saveDataResult: function(data, fromHeight){
-		if (stateDb.status == 'open'){
-			stateDb.put('block.' + fromHeight, JSON.stringify( data ), function(err){});
-		}
-	},
-	
-	//save 15min (900 block) avg quote 
-	saveAvgResult: function(data, fromHeight){
-		if (stateDb.status == 'open'){
-			stateDb.put('block.avg.' + fromHeight, JSON.stringify( data ), function(err){});
-		}
-	},
-	
-	//tbd    
-	saveTradeResult: function(data, fromHeight){
-		if (tradesDb.status == 'open'){
-			tradesDb.put('block.' + fromHeight, JSON.stringify( data ), function(err){});
+			//
+			appState.latestAvg = calcAvg;
 		}
 	}
 }
@@ -454,8 +389,7 @@ let appState = indexProtocol.getDefaultState();
 let beginBlockTs = 0; // process.hrtime();
 let endBlockTs = 0;
 
-//var _queueToCommit = [];
-
+//Create ABCI server 
 let server = createServer({
 	
 	//Global initialize network
@@ -511,7 +445,7 @@ let server = createServer({
 	checkTx: function(request) {
 		//console.log('Call: CheckTx', request);   
 		// let tx = request.tx;
-		return { code: 0, log: 'tx succeeded' }
+		return { code: 0 }; //, log: 'tx succeeded'
 	},
 
 	deliverTx: function(request) {
@@ -596,7 +530,7 @@ let server = createServer({
 		// update state
 		// state.count += 1
 
-		return { code: 0, log: 'tx succeeded' };
+		return { code: 0 }; //, log: 'tx succeeded' };
 	},
   
 	beginBlock: function(request) {
@@ -607,13 +541,6 @@ let server = createServer({
 
 		beginBlockTs = process.hrtime();
 		
-		/**
-		//async save latest data 
-		if (appState.dataStore){
-			//save latest block to db
-			indexProtocol.saveAvgResult( appState.dataStore, appState.dataStore.blockHeight );
-		}
-		*/
 		return { code: 0 };
 	},
   
@@ -622,27 +549,31 @@ let server = createServer({
 
 		if (appState.blockStore.length == storeLatestBlocks){
 			var tmp = appState.blockStore.pop();
+			delete tmp;
 		}
+		
+		//lets calc some avg stat of block 
+		let avgQuote = {
+			blockHeight: hx, 
+			
+			avgPrice: 0,
+			minPrice: 0,
+			maxPrice: 0,
+			
+			vwapPrice: 0,
+			
+			totalVolume: 0,
+			totalAmount: 0,
+			
+			tx: [],
+			
+			totalTx: currentBlockStore.length,
+			exchangesIncluded: []
+		};
 
 		//update only non-empty block
 		if (currentBlockStore.length > 0){
-			//lets calc some avg stat of block 
-			let avgQuote = {
-				blockHeight: hx, 
-				
-				avgPrice: 0,
-				minPrice: 0,
-				maxPrice: 0,
-				
-				vwapPrice: 0,
-				
-				totalVolume: 0,
-				totalAmount: 0,
-				
-				totalTx: currentBlockStore.length,
-				exchangesIncluded: []
-			}
-			
+						
 			var x = 0, y = 0, z = 0, vwap = 0;
 			var p = [];
 				
@@ -653,7 +584,7 @@ let server = createServer({
 				
 				vwap = vwap + (v.total); // / fixedExponent);
 				
-				p.push( parseFloat( v.price ) );
+				p.push( parseInt( v.price ) );
 				
 				if (v.excode)
 					avgQuote.exchangesIncluded.push( v.excode );
@@ -667,81 +598,58 @@ let server = createServer({
 			avgQuote.maxPrice = _.max( p );
 			avgQuote.vwapPrice = parseInt( (vwap / avgQuote.totalAmount ) * fixedExponent );
 			
-			avgQuote.exchangesIncluded.sort();			
-			avgQuote.exchangesIncluded = _.uniq( avgQuote.exchangesIncluded, true );
-			
-			//console.debug( avgQuote );		
-			appState.blockStore.unshift( { Height: hx, tx: currentBlockStore, avgQuote: avgQuote } );
+			if (avgQuote.exchangesIncluded.length > 1){
+				avgQuote.exchangesIncluded.sort();			
+				avgQuote.exchangesIncluded = _.uniq( avgQuote.exchangesIncluded, true );
+			}
 		}
-		else
-			appState.blockStore.unshift( { Height: hx, tx: currentBlockStore, avgQuote: null } );
-
+		
+		avgQuote.tx = currentBlockStore;
+		
+		appState.blockStore.unshift( avgQuote );
 		appState.blockHeight = hx;
-
 		appState.previousAppHash = appState.appHash;
 		appState.appHash = '';
 
-		console.log('EndBlock. Height: ' + hx + ', tx count: ' + currentBlockStore.length ); 
+		console.log(hx + ' EndBlock, tx count: ' + currentBlockStore.length ); 
 
-		return { code: 0, log: 'endBlock succeeded' };
+		return { code: 0 };
 	},
 
 	//Commit msg for each block.
 	commit: function(){
-		//console.log('Call: Commit block'); 
-
-		events.emit('blockCommit', appState.blockHeight);
+		//events.emit('blockCommit', appState.blockHeight);
+		indexProtocol.blockCommitHandler( appState.blockHeight );
 
 		endBlockTs = process.hrtime( beginBlockTs ); 
 
 		if (appState.appHash == ''){
 			const time = process.hrtime();
 			
-			let hash = indexProtocol.calcStateHash();
+			//create full string
+			let jsonAppState = JSON.stringify( appState );
 			
-			/* test speed
-			let hash = crypto.createHash('sha256');
-			let jsonAppState = JSON.stringify( appState ); //stringify( appState );
+			//calc actual hash
+			appState.appHash = indexProtocol.calcHash( jsonAppState, false);
 			
-				hash.update( jsonAppState, 'utf8' );
-			let appHashHex = hash.digest('hex');
-			*/
-			
-			appState.appHash = hash; //appHashHex; 
-			
-			//let gzip = zlib.createGzip({level: 6});
-			
-			/** gzip version
-			//Sync store 
-			fs.writeFileSync( stateFilePath,
-				zlib.gzipSync(Buffer.from(jsonAppState, 'utf8'), {level: 6}), {encoding: 'binary', flag: 'w'});
-			**/
 			const diff = process.hrtime(time);	
 			const time2 = process.hrtime();
-   
-			//indexProtocol.saveTradeResult(  appState.blockStore[0].avgQuote, appState.blockHeight);
-			
-			//for restart, use -900 blocks as state 
-			
-			var  tmp = JSON.stringify(appState.dataStore);
 			
 			var ops = [
 				{ type: 'put', key: 'appHash', value: appState.appHash },
-				{ type: 'put', key: 'previousAppHash', value: appState.previousAppHash },
 				{ type: 'put', key: 'blockHeight', value: appState.blockHeight },
 				
-				{ type: 'put', key: 'blockStore', value: JSON.stringify(appState.blockStore) },
-				{ type: 'put', key: 'dataStore', value: tmp}, //possible to optimize
+				{ type: 'put', key: 'appState', value: jsonAppState },
 
-				{ type: 'put', key: 'block.avg.' + appState.blockHeight, value: tmp},
-				{ type: 'put', key: 'block.txa.' + appState.blockHeight, value: JSON.stringify(appState.blockStore[0].avgQuote) }
+				{ type: 'put', key: 'block.avg.' + appState.blockHeight, value: JSON.stringify(appState.latestAvg) },
+				{ type: 'put', key: 'block.tx.' + appState.blockHeight, value: JSON.stringify(appState.blockStore[0])}
 			];
 			
 			stateDb.batch(ops, function (err){
 				if (!err){
 					const diff2 = process.hrtime(time2);
 			
-					console.log('New appState hash: ' + hash + ', appState save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', block: '+ prettyHrtime(endBlockTs)+')');
+					console.log(' new appState hash: ' + appState.appHash + ', appState save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', block: '+ prettyHrtime(endBlockTs)+')');
 				}
 				else {
 					console.log('ERROR while save state to DB');
