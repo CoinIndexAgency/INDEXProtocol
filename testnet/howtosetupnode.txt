@@ -1,0 +1,58 @@
+Mapping 
+
+node 0 - ca1.testnet.indexprotocol.online
+node 1 - ca2.testnet.indexprotocol.online
+node 2 - ca3.testnet.indexprotocol.online
+  
+node 3 - ny1.testnet.indexprotocol.online
+node 4 - ny2.testnet.indexprotocol.online
+node 5 - ny3.testnet.indexprotocol.online 
+  
+node 6 - sf1.testnet.indexprotocol.online 
+node 7 - sf2.testnet.indexprotocol.online 
+  
+node 8 - sg1.testnet.indexprotocol.online
+node 9 - uk1.testnet.indexprotocol.online 
+node 10 - in1.testnet.indexprotocol.online  -ttl
+  
+node 11 - de1.testnet.indexprotocol.online
+node 12 - de2.testnet.indexprotocol.online 
+  
+node 13 - am1.testnet.indexprotocol.online
+node 14 - am2.testnet.indexprotocol.online
+
+
+
+
+==================================
+     Set-up new Node
+==================================
+
+1) create swap (e.g. 4Gb size) 
+
+fallocate -l 4G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo "/swapfile    none    swap    sw    0    0" >> /etc/fstab
+swapon -s
+
+or 
+
+fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && swapon -s
+
+2) add repo
+
+curl -sL https://deb.nodesource.com/setup_10.x | bash -
+
+apt-get install build-essential gcc g++ make git nodejs
+
+3) Update NPM to latest 
+
+npm install -g npm@latest
+
+4) Install pm2 
+
+npm install -g pm2@latest
+
+

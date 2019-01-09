@@ -1,0 +1,22 @@
+{
+    "name": "indexapp",
+    "preferGlobal": true,
+    "version": "0.0.1",
+    "author": "Aleks Raiden <raiden@indexprotocol.network>",
+    "description": "Alpha version of ABCI App for INDEX Protocol Testnet",
+    "license": "MIT",
+    "engines": {
+        "node": ">=0.10"
+    },
+    "scripts": {
+        "start": "node ./indexapp.js"
+    },
+    "dependencies": {
+		"js-abci": "github:CoinIndexAgency/js-abci#4.0.2",
+        "pretty-hrtime": "^1.0",
+        "underscore": "^1.9",
+        "yieldable-json": "^1.0",
+		"async"	: "^2.6",		
+		"rocksdb"   : "github:Level/rocksdb.git#v3.0.3"
+    }
+}

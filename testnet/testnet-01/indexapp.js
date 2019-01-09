@@ -54,20 +54,26 @@ console.log('ABCI Server starting...');
 server.listen(26658, function(){
 	console.log('ABCI Server started OK');
 	
-	/***
 	console.log('Tendermint node (full-node, not a Validator) starting...');
+	
+	var moniker = process.argv[2];
+	
+	if (!moniker)	moniker = 'unk-testnet';
+		
 	// tendermintLogDebug
-		tendermint = spawn('/opt/tendermint/tendermint', ['node', '--home=/opt/tendermint', "--log_level='*:debug'"]);
-			
-		tendermint.stdout.on('data', (data) => {
-		  console.log('TC:' + data);
-		});
+	tendermint = spawn('/opt/tendermint/tendermint', ['node', '--home=/opt/tendermint', '--moniker=' + moniker]);
+		
+	tendermint.stdout.on('data', (data) => {
+	  console.log('TC:' + data);
+	});
 
-		tendermint.on('close', (code) => {
-		  console.log('tCore: child process exited with code: ' + code);
-		  console.log('');
-			  
-		  process.exit(1);
-		});
-	*/
+	tendermint.on('close', (code) => {
+	  console.log('TC: child process exited with code: ' + code);
+	  console.log('');
+		  
+	  process.exit(1);
+	});	
+	
+	// Here we send the ready signal to PM2
+	process.send('ready');
 });

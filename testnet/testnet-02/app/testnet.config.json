@@ -1,0 +1,63 @@
+{
+  apps : [
+	{
+		name: 'testnet',
+		script: '/opt/tendermint/app/indexapp.js',
+
+		args: '',
+		instances: 1,
+		autorestart: true,
+		watch: false,
+		max_memory_restart: '1G',
+		source_map_support: false,
+		log:	'/var/log/testent.log',
+		combine_logs: true,
+		wait_ready: true,
+		force: false
+	},
+	
+	{
+		name: 'tendermint',
+		script: '/opt/tendermint/tendermint',
+
+		args: ' node --home=/opt/tendermint --moniker=dev', //moniker
+		instances: 1,
+		autorestart: true,
+		watch: false,
+		max_memory_restart: '2G',
+		source_map_support: false,
+
+		//error_file: '/var/log/tendermint.error.log',
+		log:	'/var/log/tendermint.log',
+
+		combine_logs: true,
+			
+		pid_file: '/var/run/tendermint.pid',
+
+		wait_ready: false,
+		force: false
+	} /**,
+
+	{
+		name: 'datafeed',
+		script: '/opt/tendermint/app/datafeed/feedloader.php',
+
+		args: '', 
+		instances: 1,
+		autorestart: true,
+		watch: false,
+		max_memory_restart: '1G',
+		source_map_support: false,
+
+		log:	'/var/log/datafeed.log',
+		combine_logs: true,
+		
+		restart_delay: 60000,  //1min restaring
+		
+		max_restarts: 525600, //1Y uptime
+
+		wait_ready: false,
+		force: false
+	} **/
+  ]
+}
