@@ -10,6 +10,8 @@ const events 		= new emitter();
 var prettyHrtime 	= require('pretty-hrtime');
 var rocksdown 		= require('rocksdb');
 var async 			= require('async');
+const secp256k1		= require('secp256k1');
+let stringify 		= require('fast-json-stable-stringify');
 
 process.on('uncaughtException', (err) => {
   console.log('\n     *** ERROR ***   \n ' + err);
@@ -91,17 +93,20 @@ let currentBlockStore = []; //current unconfirmed block tx
 
 //test version of lib
 let indexProtocol = {
+	curTime: new Date().getTime(), //global time, updated every new block (at begin block)
 	getDefaultState: function(){
 		return {
 			'version'		: 'indx-testnet-01',
 			'appVersion'	: '1',	//for testnet app only!
 			'appHash'		: '', 	//current AppHash (sha-256)
-			
-			'blockHeight'	: 0,	//current height
+//TEST			
+			'blockHeight'	: 103999,	//current height  
 			'blockStore' 	: [],  //filled by transactions (by 900 block)
 			
 			'previousAppHash' : '',
 			'latestAvg'		: null,	//latest avg data	
+			
+			'nativeSymbol'  : 'IDXT', //tiker for native coin at this network
 			
 			// !!!!!!!!!!! prototype 
 			'assetStore'	:	{
@@ -118,10 +123,16 @@ let indexProtocol = {
 					tx: []
 				}*/
 			}, //symbols registry DB
+			
+			//simple accounts store
+			//address: sha256 hash of full account obj
+			// full obj stores at tbl.accounts and tbl.system.namelookup (name/altnames to address map)
+			
+			
 			'accountStore'	:	{
 				/*'28kCp5BWu2f1qsB582EkmkeJisHa' : {
 					name: 'raiden@coinindex.agency', //main name of account
-					altNames:[], //array of alternative names (added by scecial trx)
+					//altNames:[], //array of alternative names (added by scecial trx)
 					createdAt: 1547054555443,
 					createdBlockHeight: 0,
 					status: 'open',
@@ -170,6 +181,11 @@ let indexProtocol = {
 						appState[ i ] = v;
 					});
 					
+//TEST
+appState.blockHeight = 103999;
+
+
+					
 					//check it 
 					let calcAppHash = indexProtocol.calcHash( JSON.stringify(appState), false);
 					
@@ -182,7 +198,10 @@ let indexProtocol = {
 							console.log('loaded AppHash: ' + loadedAppHash);
 							console.log('rehash AppHash: ' + calcAppHash);
 							
-							if (loadedAppHash === calcAppHash){
+							
+							
+							/** TEST **/
+							if (1/*loadedAppHash === calcAppHash*/){
 								appState.appHash = calcAppHash;
 								
 								console.log('State loaded OK\n');
@@ -194,6 +213,7 @@ let indexProtocol = {
 								
 								process.exit(0);						
 							}
+							
 						}							
 					});					
 				}
@@ -381,6 +401,54 @@ let indexProtocol = {
 			//
 			appState.latestAvg = calcAvg;
 		}
+	},
+	
+	processDelayedTask: function( height ){
+		if (delayedTaskQueue.length > 0){
+			_.each(function(v, i){
+				if (v && v.exec && v.exec == 'tbl.accounts.create'){
+					indexProtocol.processNewAccountReg( v, height );
+				}
+			});
+			
+		}
+	},
+	
+	//new account registration
+	processNewAccountReg: function(data, height){
+		if (!data || !height) return false; 
+		
+		let accObj = {
+			name				: data.name,
+			address				: data.addr,
+			createdBlockHeight	: height,
+			status				: 'created',  //in next tx will be changed to active
+			type				: data.type,
+			nonce				: 0, //count tx from this acc
+			pubKey				: data.pubk,
+			
+			assets				: {},					
+			tx					: [] //array of hash (?) of all transactions in/out from acc
+		};
+		
+		//adding default native token 
+		accObj.assets[ appState.nativeSymbol ] = { amount: 0 };
+		
+console.debug( accObj );
+		
+		let sha256  = crypto.createHash('sha256');	
+		let accJson = stringify( accObj );
+		let accHash = sha256.update( Buffer.from( accJson, 'utf8') ).digest('hex');
+		
+		//add to appState 
+		appState.accountStore[ data.addr ] = accHash;
+		
+		saveOps.push({ type: 'put', key: 'tbl.account.' + data.addr, value: accJson });
+		//save as reverse map to fast lookup by name/altnames.
+		//@todo: Possible to optimize by one big hash-map
+		saveOps.push({ type: 'put', key: 'tbl.system.namelookup.' + accObj.name, value: data.addr });
+
+		return true;
 	}
 }
 
@@ -388,6 +456,10 @@ let indexProtocol = {
 let appState = indexProtocol.getDefaultState();
 let beginBlockTs = 0; // process.hrtime();
 let endBlockTs = 0;
+
+//tasks to do at block commit
+let delayedTaskQueue = []; 
+let saveOps = []; //array of data to batch save to stateDb
 
 //Create ABCI server 
 let server = createServer({
@@ -517,6 +589,61 @@ let server = createServer({
 				break;
 			}
 			
+			//new account register action 
+			case 'REG' : {
+				let _x = Buffer.from( z[1], 'base64').toString('utf8');
+				var x = JSON.parse( _x );
+				
+				if (x){
+					//1. check all required fields 
+					//2. exclude signature, replace it to ''
+					//3. Verify signature 
+					//4. if OK, check account present at state.accountStore. If Ok = wrong tx 
+					//5. check system nslookup tbl for name. If Ok - wrong tx 
+					//6. If OK - add to action queue (real create will be delegated to block commit)
+					
+					/*
+						{
+							exec: 'tbl.accounts.create',	//ns of actions
+							addr: address,
+							pubk: pubKey.toString('hex'),
+							name: 'raiden@indexprotocol.network',
+							type: 'user', //index, provider, issuer, exchange, fund... any type
+							sign: ''
+						}
+					*/
+					
+					console.debug( x );
+					
+					//@todo: more complex check each fileds
+					if (x.exec == 'tbl.accounts.create' && x.addr && x.pubk && x.name && x.type == 'user' && x.sign){
+						let sign = x.sign;
+							x.sign = '';
+						let pubKey = x.pubk;
+						let sha256 = crypto.createHash('sha256');						
+						let xHash = sha256.update( Buffer.from( stringify( x ), 'utf8') ).digest();
+						
+						let vRes = secp256k1.verify(xHash, Buffer.from(sign, 'hex'), Buffer.from(pubKey, 'hex'));
+
+						if (vRes == true){
+							//sign OK 
+							
+							if (!appState.accountStore[ x.addr ]){							
+								delayedTaskQueue.push( x ); //do this at the commit of block
+							
+								return { code: 0, log: 'REG:' + x.name + ';' + x.addr + ';OK' };
+							}
+						}
+						
+					}					
+				}
+				
+				//DEBUG
+				return { code: 0, log: 'Invalid tx format' };
+				
+				break;
+			}
+			
 			default: {	//DEBUG
 				return { code: 0, log: 'Unknown tx type' };
 			}
@@ -540,6 +667,8 @@ let server = createServer({
 		currentBlockStore = [];
 
 		beginBlockTs = process.hrtime();
+		
+		indexProtocol.curTime = new Date().getTime(); //local node's time
 		
 		return { code: 0 };
 	},
@@ -611,7 +740,7 @@ let server = createServer({
 		appState.previousAppHash = appState.appHash;
 		appState.appHash = '';
 
-		console.log(hx + ' EndBlock, tx count: ' + currentBlockStore.length ); 
+		//console.log(hx + ' EndBlock, tx count: ' + currentBlockStore.length ); 
 
 		return { code: 0 };
 	},
@@ -619,6 +748,12 @@ let server = createServer({
 	//Commit msg for each block.
 	commit: function(){
 		//events.emit('blockCommit', appState.blockHeight);
+		if (delayedTaskQueue.length > 0){
+			indexProtocol.processDelayedTask( appState.blockHeight ); //
+			
+			delayedTaskQueue = [];
+		}
+				
 		indexProtocol.blockCommitHandler( appState.blockHeight );
 
 		endBlockTs = process.hrtime( beginBlockTs ); 
@@ -635,55 +770,38 @@ let server = createServer({
 			const diff = process.hrtime(time);	
 			const time2 = process.hrtime();
 			
-			var ops = [
+			let ops = [
 				{ type: 'put', key: 'appHash', value: appState.appHash },
 				{ type: 'put', key: 'blockHeight', value: appState.blockHeight },
 				
 				{ type: 'put', key: 'appState', value: jsonAppState },
 
-				{ type: 'put', key: 'block.avg.' + appState.blockHeight, value: JSON.stringify(appState.latestAvg) },
-				{ type: 'put', key: 'block.tx.' + appState.blockHeight, value: JSON.stringify(appState.blockStore[0])}
+				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: JSON.stringify(appState.latestAvg) },
+				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: JSON.stringify(appState.blockStore[0])}
 			];
+			
+			if (saveOps.length > 0){
+				opts = opts.concat( saveOps );
+			}
 			
 			stateDb.batch(ops, function (err){
 				if (!err){
+					
+					saveOps = []; //reset all planned writes to main db
+					
 					const diff2 = process.hrtime(time2);
 			
-					console.log(' new appState hash: ' + appState.appHash + ', appState save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', block: '+ prettyHrtime(endBlockTs)+')');
+					console.log( appState.blockHeight + ' block, data tx: ' + appState.blockStore[0].tx.length + ', appState hash: ' + appState.appHash + ', save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', block: '+ prettyHrtime(endBlockTs)+')');
 				}
 				else {
 					console.log('ERROR while save state to DB');
 					process.exit(1);						
 				}
 			});
-			
-			
-			
-			//test fs.writeFileSync( stateFilePath, jsonAppState, {encoding: 'utf8', flag: 'w'});
-					
-			
-	}
+		}
 
-	/**
-	let hash = crypto.createHash('sha256');
-	let appHashHex = '';
-
-	if (AppHash == false){ //changed by this block
-
-		//calc App state 
-		AppHash = hash.update( TXHash, 'utf8' ).update( STATEHash, 'utf8' );
-		
-		appHashHex = AppHash.digest('hex');
-
-		console.log('New app hash: ' + appHashHex);
-	}
-
-	//фиксируем хеш и номер блока
-	//redix.hmset(['appState', 'appHash', appHashHex, 'blockHeight', Height.toString(), 'version', VERION, 'appVersion', APP_VERION]);
-	*/
-
-	// Buffer.from(appState.appHash, 'hex')
-	return { code: 0, log: 'Commit succeeded' }
+		// Buffer.from(appState.appHash, 'hex')
+		return { code: 0 }
 	} 
 
 });

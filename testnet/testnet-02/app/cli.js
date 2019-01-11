@@ -1,6 +1,9 @@
 //let secp256k1 		= require('secp256k1');
 let crypto			= require('crypto');
 let bs58			= require('bs58');
+let secp256k1		= require('secp256k1');
+let stringify 		= require('fast-json-stable-stringify');
+let http			= require('http');
 
 console.log("\n");
 console.log('INDEXProtocol testnet cli tools');
@@ -25,8 +28,8 @@ console.log("Public key: " + pubKey.toString('hex'));
 
 let address = '';
 
-const sha256 = crypto.createHash('sha256');
-const ripemd160 = crypto.createHash('ripemd160');
+let sha256 = crypto.createHash('sha256');
+let ripemd160 = crypto.createHash('ripemd160');
 
 let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).digest(); // .digest('hex');
 
@@ -40,7 +43,82 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 	
 	console.log('Step 1: create account transaction (mnemonic code: CAT)');
 	
+	var data = {
+		exec: 'tbl.accounts.create',	//ns of actions
+		addr: address,
+		pubk: pubKey.toString('hex'),
+		name: 'raiden@indexprotocol.network',
+		type: 'user', //index, provider, issuer, exchange, fund... any type
+		sign: ''		
+	};
 	
+	//sign in by private key 
+		sha256 = crypto.createHash('sha256');
+	let dx = Buffer.from( stringify( data ), 'utf8');
+	let dxHash = sha256.update( dx ).digest();
+	
+	
+	//console.debug( crypto.getCurves() );
+	//console.log('\n');
+	//console.debug( crypto.getHashes() );
+	
+	
+	const sigObj = secp256k1.sign(dxHash, privKey);
+	let sign = sigObj.signature.toString('hex');
+	
+	//console.log( sign );
+	
+	//let sign = crypto.createSign('RSA-SHA256'); //sha256');  ecdsa-with-SHA256
+	//	sign.update( dxHash.toString('hex'), 'hex' ); //.end();
+		
+		
+	//console.log( privKey );
+		
+	//let res = sign.sign( privKey.toString('latin1'), 'latin1');
+	let res = secp256k1.verify(dxHash, sigObj.signature, Buffer.from(pubKey, 'hex'));
+	
+	console.log('  Data: ');
+	console.log( data );
+	console.log('Hash: ' + dxHash.toString('hex') );
+	console.log('Sign: ' + sign);
+	console.log(' Verify sign result: ' + res );
+	console.log('\n\n');
+	
+	if (res == true){
+		//add tx to chain 
+		data.sign = sign;
+				
+		let tx = 'reg:' + Buffer.from( stringify( data ), 'utf8').toString('base64');
+		let url = 'http://localhost:8080/broadcast_tx_commit?tx=' + tx + '&_' + new Date().getTime();
+		
+		console.log( url );
+		
+		/*
+		http.request(url, function(req){
+			if (req){
+				req.setEncoding('utf8');
+				let  rawData = '';
+				
+				req.on('data', (chunk) => { rawData += chunk; });
+				
+				req.on('end', () => {
+					try {
+					  const parsedData = JSON.parse(rawData);
+						
+						console.log('\n');
+						console.debug(parsedData);
+						console.log('\n');
+						
+					} catch (e) {
+					  console.error(e.message);
+					}
+				  });
+				
+			}
+		});
+		*/
+		
+	}
 	
 	console.log('Step 2: register new coin (mnemonic code: RNA :: RegisterNewAsset)');
 	
