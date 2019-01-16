@@ -7,9 +7,9 @@ let http			= require('http');
 
 console.log("\n");
 console.log('INDEXProtocol testnet cli tools');
-console.log('WARNING: used default TEST private key!');
+//console.log('WARNING: used default TEST private key!');
 console.log("\n");
-
+/***
 //default private key
 let privKey = Buffer.from('178194397bd5290a6322c96ea2ff61b65af792397fa9d02ff21dedf13ee9bb33', 'hex');
 
@@ -38,19 +38,61 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 	console.log('\n');
 	console.log( 'Address (base58 encoded): ' + address );
 	console.log('\n');
-	
+*/	
 	
 	
 	console.log('Step 1: create account transaction (mnemonic code: CAT)');
 	
 	var data = {
 		exec: 'tbl.accounts.create',	//ns of actions
-		addr: address,
-		pubk: pubKey.toString('hex'),
+		addr: null,
+		pubk: null, //pubKey.toString('hex'),
 		name: 'raiden@indexprotocol.network',
 		type: 'user', //index, provider, issuer, exchange, fund... any type
 		sign: ''		
 	};
+	
+	
+	if (!process.argv[2])
+		process.exit();
+	
+	
+		data.name = process.argv[2];
+		
+		//пересоздать адрес 
+		const 	ecdh 	= 	crypto.createECDH('secp256k1');
+				ecdh.generateKeys();
+		
+		let privKey = ecdh.getPrivateKey();
+		
+//console.debug( privKey );
+		
+			//ecdh.setPrivateKey( privKey );
+
+		let pubKey = ecdh.getPublicKey();
+		
+//console.debug( pubKey );
+		
+		let address = '';
+
+		let sha256 = crypto.createHash('sha256');
+		let ripemd160 = crypto.createHash('ripemd160');
+		let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).digest(); // .digest('hex');
+
+			address = bs58.encode( hash );
+			
+		data.addr = address;
+		data.pubk = pubKey.toString('hex');
+		
+		
+		console.log('===========================');
+		console.log('Generate new account:');
+		console.log('name: ' + data.name);
+		console.log('privateKey: ' + privKey.toString('hex'));
+		console.log('publicKey:  ' + pubKey.toString('hex'));
+		console.log('wallet address: ' + address);
+		console.log('\n');
+	
 	
 	//sign in by private key 
 		sha256 = crypto.createHash('sha256');
@@ -75,7 +117,7 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 	//console.log( privKey );
 		
 	//let res = sign.sign( privKey.toString('latin1'), 'latin1');
-	let res = secp256k1.verify(dxHash, sigObj.signature, Buffer.from(pubKey, 'hex'));
+	let res = secp256k1.verify(dxHash, sigObj.signature, pubKey);
 	
 	console.log('  Data: ');
 	console.log( data );
@@ -89,19 +131,27 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 		data.sign = sign;
 				
 		let tx = 'reg:' + Buffer.from( stringify( data ), 'utf8').toString('base64');
-		let url = 'http://localhost:8080/broadcast_tx_commit?tx=' + tx + '&_' + new Date().getTime();
+		let url = 'http://localhost:8080/broadcast_tx_commit?tx="' + tx + '"&_=' + new Date().getTime();
 		
 		console.log( url );
 		
-		/*
-		http.request(url, function(req){
+//process.exit();
+		
+		http.request({
+			host: 'localhost', //'rpc.testnet.indexprotocol.online',
+			port: 8080,
+			path: '/broadcast_tx_commit?tx="' + tx + '"&_=' + new Date().getTime(),
+			timeout: 15000
+		}, function(req){
+			
 			if (req){
 				req.setEncoding('utf8');
-				let  rawData = '';
+				var  rawData = '';
 				
 				req.on('data', (chunk) => { rawData += chunk; });
 				
 				req.on('end', () => {
+					
 					try {
 					  const parsedData = JSON.parse(rawData);
 						
@@ -115,11 +165,13 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 				  });
 				
 			}
-		});
-		*/
-		
+		}).on('error', (e) => {
+		  console.error(`problem with request: ${e.message}`);
+		}).end();
+				
 	}
 	
+	/*
 	console.log('Step 2: register new coin (mnemonic code: RNA :: RegisterNewAsset)');
 	
 	console.log('Step 3: emission (initial) of registered coin (mnemonic code: CGE :: CoinGenerationEvent)');
@@ -129,7 +181,7 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 	
 	
 	console.log('Step 5: Transfer coin from acc 1 to acc 2 (mnemonic code: CTE :: CoinTransferEvent)');
-	
+	*/
 //=======================
 /*	
 	

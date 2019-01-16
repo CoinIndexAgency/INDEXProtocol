@@ -100,13 +100,24 @@ let indexProtocol = {
 			'appVersion'	: '1',	//for testnet app only!
 			'appHash'		: '', 	//current AppHash (sha-256)
 //TEST			
-			'blockHeight'	: 103999,	//current height  
+			'blockHeight'	: 0,	//current height  
 			'blockStore' 	: [],  //filled by transactions (by 900 block)
 			
 			'previousAppHash' : '',
 			'latestAvg'		: null,	//latest avg data	
 			
-			'nativeSymbol'  : 'IDXT', //tiker for native coin at this network
+			//some of settings overall all chain
+			'options'		: {
+				'nativeSymbol'				: 'IDXT',  //tiker for native coin at this network
+				'initialNativeCoinBalance'	: 1000,
+				'defaultSystemAccount'		: 'testnet@indexprotocol.network',
+				
+				//full reward = rewardPerBlock + (rewardPerDataTx * DataTxCount) + SUMM(TxFee)
+				'rewardPerBlock'				: 1000, //reward to Validator for block (base value, for any tx at block)
+				'rewardPerDataTx'				: 10
+			},
+			
+			'validatorStore':{}, //state of validators balances, emission of each block. Balances ONLY at nativeSymbol
 			
 			// !!!!!!!!!!! prototype 
 			'assetStore'	:	{
@@ -182,7 +193,7 @@ let indexProtocol = {
 					});
 					
 //TEST
-appState.blockHeight = 103999;
+//appState.blockHeight = 99999;
 
 
 					
@@ -283,6 +294,49 @@ appState.blockHeight = 103999;
 			
 			events.emit('AbciServerStarted');
 		});
+	},
+	
+	//fetch pubKey from accounts base 
+	pubKeyFrom: function( id ){
+		if (!id) return false;
+		
+		//id:  address, name, any from altnames
+		if (appState.accountStore[ id ])
+			return appState.accountStore[ id ].pubKey;
+		
+		var _pubKey = null; 
+		
+		_.find(appState.accountStore, function(v){
+			if (v.name == id){
+				_pubKey = v.pubKey;
+				
+				return true;
+			}
+		});
+		
+		if (_pubKey)
+			return _pubKey;
+		else
+			return false;		
+	},
+	
+	getAddressBy: function( id ){
+		if (!id) return false;
+		
+		if (appState.accountStore[ id ] && appState.accountStore[ id ].address == id)
+			return id;
+		
+		var address = false; 
+		
+		_.find(appState.accountStore, function(v){
+			if (v.name == id || v.address == id || v.pubKey == id) {
+				address = v.address;
+				
+				return true;
+			}
+		});
+		
+		return address;		
 	},
 	
 	blockCommitHandler: function(height){
@@ -405,14 +459,61 @@ appState.blockHeight = 103999;
 	
 	processDelayedTask: function( height ){
 		if (delayedTaskQueue.length > 0){
-			_.each(function(v, i){
-				if (v && v.exec && v.exec == 'tbl.accounts.create'){
-					indexProtocol.processNewAccountReg( v, height );
+			_.each(delayedTaskQueue, function(v, i){
+				if (v && v.exec){
+					if (v.exec == 'tbl.accounts.create')
+						indexProtocol.processNewAccountReg( v, height );
+					else
+					if (v.exec == 'tbl.system.rewards')
+						indexProtocol.processValidatorsBlockReward( v, height );
+					else
+					if (v.exec == 'tbl.tx.transfer')
+						indexProtocol.processTransfer( v );
 				}
 			});
 			
 		}
 	},
+	
+	processValidatorsBlockReward: function(data, height){
+		if (!data || !height) return false; 
+		
+		if (!appState.validatorStore[ data.address ]){
+			appState.validatorStore[ data.address ] = {
+				address			: data.address,
+				totalRewards	: 0,
+				totalDataTx		: 0,
+				lastReward		: 0,
+				lastBlockHeight : 0,
+				unspentRewards	: 0,
+				
+				hash			: '',
+				appStateHash	: ''
+			};
+		}
+		
+		//add rewards 
+		appState.validatorStore[ data.address ].totalRewards++;
+		appState.validatorStore[ data.address ].totalDataTx = appState.validatorStore[ data.address ].totalDataTx + data.numTx;
+		appState.validatorStore[ data.address ].lastReward = data.rewardFull;
+		appState.validatorStore[ data.address ].unspentRewards = appState.validatorStore[ data.address ].unspentRewards + data.rewardFull;
+		
+		appState.validatorStore[ data.address ].lastBlockHeight = data.blockHeight;
+		//empty only for block 1
+		appState.validatorStore[ data.address ].appStateHash = appState.previousAppHash;
+		
+		let json = stringify( appState.validatorStore[ data.address ] );
+		
+		let sha256  = crypto.createHash('sha256');	
+		let hash = sha256.update( Buffer.from( json, 'utf8') ).digest('hex');
+		
+		appState.validatorStore[ data.address ].hash = hash;
+		
+		saveOps.push({ type: 'put', key: 'tbl.system.rewards.' + data.address, value: stringify(appState.validatorStore[ data.address ]) });
+		
+		return true;
+	},
+	
 	
 	//new account registration
 	processNewAccountReg: function(data, height){
@@ -422,6 +523,7 @@ appState.blockHeight = 103999;
 			name				: data.name,
 			address				: data.addr,
 			createdBlockHeight	: height,
+			updatedBlockHeight  : height,
 			status				: 'created',  //in next tx will be changed to active
 			type				: data.type,
 			nonce				: 0, //count tx from this acc
@@ -432,7 +534,7 @@ appState.blockHeight = 103999;
 		};
 		
 		//adding default native token 
-		accObj.assets[ appState.nativeSymbol ] = { amount: 0 };
+		accObj.assets[ appState.options.nativeSymbol ] = { amount: appState.options.initialNativeCoinBalance };
 		
 console.debug( accObj );
 		
@@ -449,6 +551,80 @@ console.debug( accObj );
 		saveOps.push({ type: 'put', key: 'tbl.system.namelookup.' + accObj.name, value: data.addr });
 
 		return true;
+	},
+	
+	//transfer asset by one account to other
+	processTransfer: function( data ){
+		//find address from 
+		//find destination addres 
+		var _from = indexProtocol.getAddressBy( data.base );
+		var _to = indexProtocol.getAddressBy( data.toad ); 
+		
+		if (_from && _to){
+			//проверить достаточность суммы 
+			var total = data.amnt; //
+			var fromAcc = appState.accountStore[ _from ];
+			var toAcc   = appState.accountStore[ _to ];
+			
+			if (fromAcc.assets[ data.symb ].amount >= total && fromAcc.nonce < data.nonc){
+				//do this 
+				if (!toAcc.assets[ data.symb ]){
+					toAcc.assets[ data.symb ] = { amount: 0};
+				}
+				
+				fromAcc.nonce++;				
+				fromAcc.assets[ data.symb ].amount = fromAcc.assets[ data.symb ].amount - total;
+				toAcc.assets[ data.symb ].amount = toAcc.assets[ data.symb ].amount + total;
+				
+				fromAcc.updatedBlockHeight = appSate.blockHeight;
+				toAcc.updatedBlockHeight = appSate.blockHeight;
+				
+				//формируем тразакцию для сохранения 
+				let tx = {
+					fromAddr	: _from,
+					toAddr   	: _to, 
+					blockheight : appSate.blockHeight,
+					appState	: appState.previousAppHash,
+					
+					hash 		: '',
+					
+					original	: data
+				}
+				
+				
+				let sha256  = crypto.createHash('sha256');	
+				let txHash  = sha256.update( Buffer.from( stringify( tx ), 'utf8') ).digest('hex');
+				
+				tx.hash = txHash;
+				
+				let txJson = stringify( tx );
+				
+				fromAcc.tx.push( txHash );
+				toAcc.tx.push( txHash );
+				
+				let sha256  = crypto.createHash('sha256');	
+				let accJson = stringify( fromAcc );
+				let accHash = sha256.update( Buffer.from( accJson, 'utf8') ).digest('hex');
+				
+				appState.accountStore[ _from ] = accHash;
+				
+				
+				let sha256  = crypto.createHash('sha256');	
+				let accJson = stringify( toAcc );
+				let accHash = sha256.update( Buffer.from( accJson, 'utf8') ).digest('hex');
+				
+				appState.accountStore[ _to ] = accHash;
+				
+				saveOps.push({ type: 'put', key: 'tbl.tx.transfer.' + txHash, value: txJson });
+				
+				return true;				
+			}			
+		}		
+	},
+	
+	//API handlers for abci_query 
+	api: {
+		
 	}
 }
 
@@ -482,12 +658,12 @@ let server = createServer({
 			validators: [] //use validators list, defined by genesis.json
 		};		
 	},	
-
   
 	info: function(request) {
 		console.log('INFO request called');
 		console.debug( request );
 		
+		//@todo optimize it
 		stateDb.put('appVersion', appState.appVersion, function(err){});
 		stateDb.put('version', appState.version, function(err){});
 
@@ -509,9 +685,40 @@ let server = createServer({
 
 	query: function(request){
 		console.log('QUERY request called');
-		console.debug( request );  
+		console.debug( request ); 
+		
+		/*
+			QUERY request called
+			RequestQuery { data: <Buffer 7a 7a 7a 7a>, path: 'getaccountaddress' }
+		*/
+		
+		if (request.path){
+			let path = request.path.toLowerCase();
+			let data = request.data; //Buffer 
+			
+			//var result = new Promise();
+			
+			if (path === 'getaccountaddress'){
+				return new Promise(function(resolve, reject){
+					setTimeout(function(){
+						return resolve( {code: 0, value: Buffer.from(JSON.stringify({"fuck" : 'hhhhhhhhhhhhhhhhhhhh', env: process.config }), 'utf8').toString('base64')} ); //{ code: 0, data: 'ggggg', response: 'klkhkjhkhk'});
+					}, 5000);
+				});
+			}
+			
+		}
+		else
+			return { code: 0 };
+		
+		
 
-		return { code: 0 };
+		//let path = request.path;
+		
+		//let tmp = Buffer.from( path, 'utf8').toString('utf8');
+		
+		//console.debug( tmp );
+
+		//return { code: 0 };
 	},
   
 	checkTx: function(request) {
@@ -644,6 +851,72 @@ let server = createServer({
 				break;
 			}
 			
+			//Transfer active from one address to another address
+			case 'TRA' : {
+				let _x = Buffer.from( z[1], 'base64').toString('utf8');
+				var x = JSON.parse( _x );
+				
+				if (x){
+					//1. check all required fields 
+					//2. exclude signature, replace it to ''
+					//3. Verify signature 
+					//4. if OK, check account present at state.accountStore. If Ok = wrong tx 
+					//5. check system nslookup tbl for name. If Ok - wrong tx 
+					//6. If OK - add to action queue (real create will be delegated to block commit)
+					
+					/*
+						{
+							exec: 'tbl.tx.transfer',	//ns of actions
+							base: address,
+							toad: address, //or name or one of altnames registered by chain
+							//pubk: pubKey.toString('hex'), //from pubkey
+							symb: 'IDXT', // if empty, null or 0 = IDXT or any default type of coin, or registered symbols
+							amnt: 10000, //amount of tx, including tfee, (always integer, used fixedExponent), min is 1
+							tfee: 1, // standart fee (or any other, todo)
+							data: '', //up to 256 bytes any user data 
+							nonc: 1, 
+							sign: '' //signature from privateKey of from address
+						}
+					*/
+					
+					console.debug( x );
+					
+					//@todo: more complex check each fileds
+					if (x.exec == 'tbl.tx.transfer' && x.base && x.toad && x.amnt && x.nonc > 0 && x.sign){
+						
+						let sign = x.sign;
+							x.sign = '';
+						
+						//find pubKey from associated acc 
+						let pubKey = indexProtocol.pubKeyFrom( x.base );
+						
+						if (!pubKey || pubKey === false)
+							return { code: 0, log: 'Wrong account' };
+						
+						let sha256 = crypto.createHash('sha256');						
+						let xHash = sha256.update( Buffer.from( stringify( x ), 'utf8') ).digest();
+						
+						let vRes = secp256k1.verify(xHash, Buffer.from(sign, 'hex'), Buffer.from(pubKey, 'hex'));
+
+						if (vRes == true){
+							//sign OK 
+							
+							delayedTaskQueue.push( x ); //do this at the commit of block
+							
+							return { code: 0 };
+						}
+						
+					}					
+				}
+				
+				//DEBUG
+				return { code: 0, log: 'Invalid tx format' };
+				
+				break;
+			}
+			
+			
+			
 			default: {	//DEBUG
 				return { code: 0, log: 'Unknown tx type' };
 			}
@@ -662,7 +935,26 @@ let server = createServer({
   
 	beginBlock: function(request) {
 		//console.log('Call: BeginBlock. Height: ' + request.header.height);  
-
+		
+		console.log( request.header.height + ' block proposerAddress: ' + request.header.proposerAddress.toString('hex') ); 
+		
+		let proposerAddress = request.header.proposerAddress.toString('hex');
+		let numTx = parseInt( request.header.numTxs.toString() );
+		let rewardFull = appState.options.rewardPerBlock + ( appState.options.rewardPerDataTx * numTx);
+			
+			//save to special system tbl 
+			delayedTaskQueue.push({
+				exec: 'tbl.system.rewards', 
+				address: proposerAddress, 
+				rewardPerBlock: appState.options.rewardPerBlock,
+				rewardPerDataTx: appState.options.rewardPerDataTx,
+				numTx: numTx,
+				
+				rewardFull: rewardFull,
+				
+				blockHeight: parseInt( request.header.height.toString() )
+			});
+		
 		//initial current block store
 		currentBlockStore = [];
 
@@ -762,7 +1054,7 @@ let server = createServer({
 			const time = process.hrtime();
 			
 			//create full string
-			let jsonAppState = JSON.stringify( appState );
+			let jsonAppState = JSON.stringify( appState );//stringify
 			
 			//calc actual hash
 			appState.appHash = indexProtocol.calcHash( jsonAppState, false);
@@ -776,12 +1068,12 @@ let server = createServer({
 				
 				{ type: 'put', key: 'appState', value: jsonAppState },
 
-				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: JSON.stringify(appState.latestAvg) },
-				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: JSON.stringify(appState.blockStore[0])}
+				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: stringify(appState.latestAvg) },
+				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: stringify(appState.blockStore[0])}
 			];
 			
 			if (saveOps.length > 0){
-				opts = opts.concat( saveOps );
+				ops = ops.concat( saveOps );
 			}
 			
 			stateDb.batch(ops, function (err){
@@ -806,19 +1098,19 @@ let server = createServer({
 
 });
 
-/**
+/*
 //=== Debug
 setInterval(function(){
 	
 	console.log('\n');
 	
-	console.dir( appState , {depth:4, colors: true });
+	console.dir( appState.validatorStore, {depth:4, colors: true });
 	
 	console.log('\n');
 	
 	
 }, 60000);
-**/
+*/
 //===
 
 //initial subscribe to events

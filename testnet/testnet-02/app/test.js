@@ -52,9 +52,11 @@ Real hash of pubkey: 18fe93bfc9f4dfea3d9f55f941b7d1a060f6c358
 */
 //=======================
 const ecdh = crypto.createECDH('secp256k1');
-//let keyPair =  ecdh.generateKeys();
+let keyPair =  ecdh.generateKeys();
 
-//console.debug( keyPair.toString('hex') );
+console.log('=======');
+console.debug( keyPair.toString('hex') );
+console.log('=======');
 
 //console.debug( ecdh );
 
