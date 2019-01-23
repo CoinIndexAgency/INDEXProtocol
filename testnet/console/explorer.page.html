@@ -4,13 +4,13 @@
 		
 	$('.content').hide();
 	
-	
-	
-	
+	var height = 0;
 	
 	function updatePage(){
 		$.getJSON('https://rpc.testnet.indexprotocol.online/status', function(res){
 			let obj = res.result;
+//console.log( obj );
+//console.log( indexProtocol.height );
 			
 			var el = $('.content');
 				el.find('#latest-block-height').html( '<a href="javascript: void indexProtocol.blockPage('+obj.sync_info.latest_block_height+');">'+ obj.sync_info.latest_block_height + '</a>');
@@ -27,51 +27,97 @@
 			//latest height
 			let _height = parseInt( obj.sync_info.latest_block_height );
 			
-			//if (indexProtocol.height == _height)
-			//	return;
+			if (indexProtocol.height == _height)
+				return;
 			
 			indexProtocol.height = _height;
 			
 			el.show();
-			
-			//updateValidatorsInfo();
 		});
 	}
 	
-	function updateValidatorsInfo(){
-		//fetch last blocks
-		$.getJSON('https://rpc.testnet.indexprotocol.online/genesis', function(res){
-			var el = $('.content');
+	var _curBlock = 0;
+	
+	function updateExplorerInfo( fromHeight ){
+		if (!fromHeight)
+			fromHeight = indexProtocol.height; 
+		
+		var el = $('.content');
+		_curBlock = fromHeight;
+		
+		$.getJSON('https://rpc.testnet.indexprotocol.online/blockchain?maxHeight=' + fromHeight, function(res){
 			var obj = res.result;
 			var tmp = '';
-						
-			let totVl = obj.genesis.validators.length;
-				el.find('#total-validators').html( totVl + ' validators' );
 			
-			_.each(obj.genesis.validators, function(v, i){
-				let t = v.name.substring(0, 2);
-				let nodeLocation = indexProtocol.nodeCodes[ t ];
+			let lt = 0; //last block time 
+			let ft = moment(obj.block_metas[0].header.time); //first block 
+			
+			_.each(obj.block_metas, function(v, i){
+				let t = '';
+				let tm = moment(v.header.time);
+				let dft = ' ';
 				
-				if (!nodeLocation) nodeLocation = '<i>unk</i>';
-				if (v.name == 'dev') nodeLocation = '<b>DEV</b>';
+				if (i == 0){
+					lt = tm;
+					t = '<span title="Latest block">'+tm.format('DD.MM.YYYY HH:mm:ss')+'</span>';   
+				}
+				else {
+					dft = Math.abs( parseInt( tm.diff( lt, 'seconds') ) ) + ' sec.';
+					
+					t = '<span>'+tm.format('DD.MM.YYYY HH:mm:ss')+'</span>';
+					
+					lt = tm;
+				}
 				
-				let z = '<td><a href="http://rpc.'+v.name+'.testnet.indexprotocol.online/" target="_new">'+v.name+'</a></td><td>'+nodeLocation+'</td>' + 
-						'<td>'+v.address.toLowerCase()+'</td>' + 
-						'<td>'+v.pub_key.value+'</td>' + 
-						'<td>'+v.power+'</td>';  
+				if (v.header.num_txs > 0)
+					txs = '<b>' + v.header.num_txs + '</b>';
+				else
+					txs = '<i>0</i>';
+			
+			// 
+				let z = '<td><a href="javascript: void indexProtocol.blockPage('+parseInt(v.header.height)+');">'+v.header.height+'</a></td>' + 
+						'<td title="Block hash: '+v.block_id.hash+'" style="cursor:pointer;">'+v.block_id.hash.substring( 0, 32 ).toLowerCase()+'</td>' + 
+						'<td style="width:200px;">'+ t + '</td>' + 
+						'<td>'+ dft + '</td>' + 
+						'<td title="Proposal address: '+v.header.proposer_address+'" style="cursor:pointer;">'+v.header.proposer_address.substring( 0, 16 ).toLowerCase()+'</td>' + 
+						'<td>'+txs+'</td>';
 						
 				tmp = tmp + '<tr align="center">' + z + '</tr>';
-				
-						
-				
-								
 			});
 			
-			el.find('#validators-tbl').empty().html( tmp );
+			el.find('#explorer-blocks-tbl').empty().html( tmp );
+			
+			el.show();
 		});
+		
+		
 	}
 
 	
+	
+	function previousBlocks(){
+		let fromHeight = _curBlock;
+		
+		if (!fromHeight)	fromHeight = indexProtocol.height;
+		
+		if (fromHeight > 20)
+			fromHeight = fromHeight - 20;
+			
+		updateExplorerInfo(fromHeight);
+	}
+	
+	function nextBlocks(){
+		let fromHeight = _curBlock;
+		
+		if (!fromHeight)	fromHeight = indexProtocol.height;
+		
+		if (fromHeight < (indexProtocol.height-20))
+			fromHeight = fromHeight + 20;
+		else
+			fromHeight = indexProtocol.height;
+			
+		updateExplorerInfo(fromHeight);
+	}
 	
 	indexProtocol._timer = setInterval(function(){
 		updatePage();
@@ -82,7 +128,7 @@
 <!-- Content Header (Page header) -->
 <section class="content-header">
   <h1>
-	INDEXProtocol Network <small>Testnet</small>
+	INDEXProtocol Network	<small>Testnet</small>
   </h1>
   <ol class="breadcrumb">
 	<!--
@@ -105,7 +151,7 @@
 		  <span class="info-box-number">
 			<font id="latest-block-height"></font>
 			<br />
-			<font id="total-validators"></font>
+			<font id="total-tx-blockchain"></font>
 		  </span>
 		</div>
 		<!-- /.info-box-content -->
@@ -164,7 +210,7 @@
 		<!-- TABLE: LATEST ORDERS -->
 	  <div class="box box-info"> 
 		<div class="box-header with-border">
-		  <h3 class="box-title">Validators list</h3>
+		  <h3 class="box-title">Full chain Block Explorer</h3>
 <!--
 		  <div class="box-tools pull-right">
 			<button type="button" class="btn btn-box-tool" data-widget="collapse"><i class="fa fa-minus"></i>
@@ -179,14 +225,15 @@
 			<table class="table no-margin">
 			  <thead>
 			  <tr align="center" style="text-align:center;">
-			    <th style="text-align:center;">Node</th>
-				<th style="text-align:center;">Location</th>
-				<th style="text-align:center;width:200px;">Address</th>
-				<th style="text-align:center;width:200px;">Public Key (Ed25519)</th>
-				<th style="text-align:center;">Power</th>
+				<th style="text-align:center;">Height</th>
+				<th style="text-align:center;">Hash</th>
+				<th style="text-align:center;width:200px;">Block Time</th>
+				<th style="text-align:center;">Interval</th>
+				<th style="text-align:center;">Proposer</th>
+				<th style="text-align:center;">Txs</th>
 			  </tr>
 			  </thead>
-			  <tbody id="validators-tbl">
+			  <tbody id="explorer-blocks-tbl">
 				
 			  </tbody>
 			</table>
@@ -195,9 +242,10 @@
 		</div>
 		<!-- /.box-body -->
 		<div class="box-footer clearfix">
-		  <!--<a href="javascript:void(0)" class="btn btn-sm btn-info btn-flat pull-left">Place New Order</a>
-		  <a href="javascript:void updateNetworkInfo();" class="btn btn-sm btn-default btn-flat pull-right">
-			<i class="fa fa-sync"></i> Update</a>-->
+		  <a href="javascript:void previousBlocks()" class="btn btn-sm btn-info btn-flat pull-left">Previos</a>
+		  
+		  <a href="javascript:void nextBlocks()" class="btn btn-sm btn-success btn-flat pull-right">Next</a>
+		  <!--<a href="javascript:void updateExplorerInfo();" class="btn btn-sm btn-default btn-flat pull-right">Update</a>-->
 		</div>
 		<!-- /.box-footer -->
 	  </div>
@@ -212,5 +260,5 @@
 
 <script>
 updatePage();
-updateValidatorsInfo();
+updateExplorerInfo();
 </script>

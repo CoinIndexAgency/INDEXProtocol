@@ -13,7 +13,7 @@ node 7 - sf2.testnet.indexprotocol.online
   
 node 8 - sg1.testnet.indexprotocol.online
 node 9 - uk1.testnet.indexprotocol.online 
-node 10 - in1.testnet.indexprotocol.online  -ttl
+node 10 - in1.testnet.indexprotocol.online  -ttl   switch to uk2
   
 node 11 - de1.testnet.indexprotocol.online
 node 12 - de2.testnet.indexprotocol.online 
@@ -21,12 +21,18 @@ node 12 - de2.testnet.indexprotocol.online
 node 13 - am1.testnet.indexprotocol.online
 node 14 - am2.testnet.indexprotocol.online
 
+=== Added node from Google Cloud
+
+tw1 = 34.80.155.115 - Taivane
 
 
 
 ==================================
      Set-up new Node
 ==================================
+Need: Nginx 1.13+, PHP 7.2+ (testnet)
+
+
 
 1) create swap (e.g. 4Gb size) 
 
@@ -54,5 +60,9 @@ npm install -g npm@latest
 4) Install pm2 
 
 npm install -g pm2@latest
+
+5) cd /opt/tendermint/app 
+
+6) npm update 
 
 

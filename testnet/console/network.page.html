@@ -34,40 +34,91 @@
 			
 			el.show();
 			
-			//updateValidatorsInfo();
+			updateNetworkInfo();
 		});
 	}
 	
-	function updateValidatorsInfo(){
+	function updateNetworkInfo(){
 		//fetch last blocks
-		$.getJSON('https://rpc.testnet.indexprotocol.online/genesis', function(res){
+		$.getJSON('https://rpc.testnet.indexprotocol.online/net_info', function(res){
 			var el = $('.content');
 			var obj = res.result;
 			var tmp = '';
 						
-			let totVl = obj.genesis.validators.length;
-				el.find('#total-validators').html( totVl + ' validators' );
+			let totPeers = obj.n_peers;
+				el.find('#total-peers-blockchain').html( totPeers + ' peers' );
+				
+			indexProtocol.totalNodesBytes = 0;
 			
-			_.each(obj.genesis.validators, function(v, i){
-				let t = v.name.substring(0, 2);
+			_.each(obj.peers, function(v, i){
+				let t = v.node_info.moniker.substring(0, 2);
 				let nodeLocation = indexProtocol.nodeCodes[ t ];
 				
-				if (!nodeLocation) nodeLocation = '<i>unk</i>';
-				if (v.name == 'dev') nodeLocation = '<b>DEV</b>';
+				if (!nodeLocation) nodeLocation = '<i>unknown</i>';
+				if (v.node_info.moniker == 'dev') nodeLocation = '<b>Developer</b>';
 				
-				let z = '<td><a href="http://rpc.'+v.name+'.testnet.indexprotocol.online/" target="_new">'+v.name+'</a></td><td>'+nodeLocation+'</td>' + 
-						'<td>'+v.address.toLowerCase()+'</td>' + 
-						'<td>'+v.pub_key.value+'</td>' + 
-						'<td>'+v.power+'</td>';  
+				let con = v.connection_status;
+				let sendStat = '', recvStat = '';
+				
+				
+				if (con.SendMonitor.Active == true){
+					sendStat = sendStat + '<i class="fas fa-arrow-circle-up" style="color:green"></i>&nbsp;';
+				} else {
+					sendStat = sendStat + '<i class="fas fa-times-circle" style="color:red"></i>&nbsp;';
+				}
+				
+				let curRate = '', avgRate = '', bytes = '';
+				
+					curRate = Number( parseInt(con.SendMonitor.CurRate) / 1024 ).toFixed(1);//.toPrecision(1);
+					avgRate = Number( parseInt(con.SendMonitor.AvgRate) / 1024 ).toFixed(1);//.toPrecision(1);
+					bytes = Math.floor( parseInt(con.SendMonitor.Bytes) / 1024 ); 
+					
+					if (bytes < 1024)	bytes = bytes + ' Kb.'; else
+					if (bytes > 1024 && bytes < (1024*1024))
+						bytes = Math.floor( parseInt(bytes) / 1024 ) + ' Mb.'; else 
+						bytes = Math.floor( parseInt(bytes) / (1024*1024) ) + ' Gb.';
+						
+				sendStat = sendStat + ' ' + '<span style="cursor:pointer;" title="Current speed, Kb/sec.">'+curRate+'</span>' + '/<span style="cursor:pointer;" title="Average speed, Kb/sec.">' + avgRate + '</span> Kbps;&nbsp;&nbsp;' + bytes;	
+				
+				
+				
+				if (con.RecvMonitor.Active == true){
+					recvStat = recvStat + '<i class="fas fa-arrow-circle-down" style="color:green"></i>&nbsp;';
+				} else {
+					recvStat = recvStat + '<i class="fas fa-times-circle" style="color:red"></i>&nbsp;';
+				}
+				
+				//let curRate = '', avgRate = '', bytes = '';
+				
+					curRate = Number( parseInt(con.RecvMonitor.CurRate) / 1024 ).toFixed(1);//.toPrecision(1);
+					avgRate = Number( parseInt(con.RecvMonitor.AvgRate) / 1024 ).toFixed(1);//.toPrecision(1);
+					bytes = Math.floor( parseInt(con.RecvMonitor.Bytes) / 1024 ); 
+					
+					if (bytes < 1024)	bytes = bytes + ' Kb.'; else
+					if (bytes > 1024 && bytes < (1024*1024))
+						bytes = Math.floor( parseInt(bytes) / 1024 ) + ' Mb.'; else 
+						bytes = Math.floor( parseInt(bytes) / (1024*1024) ) + ' Gb.';
+						
+				recvStat = recvStat + ' ' + '<span style="cursor:pointer;" title="Current speed, Kb/sec.">'+curRate+'</span>' + '/<span style="cursor:pointer;" title="Average speed, Kb/sec.">' + avgRate + '</span> Kbps; &nbsp;&nbsp;' + bytes;
+						
+				
+				let z = '<td><a href="http://rpc.'+v.node_info.moniker+'.testnet.indexprotocol.online/" target="_new">'+v.node_info.moniker+'</a></td><td>'+nodeLocation+'</td>' + 
+						'<td>'+v.node_info.id+'</td>' + 
+						'<td align="left">'+sendStat+'</td>' + 
+						'<td align="left">'+recvStat+'</td>';  
 						
 				tmp = tmp + '<tr align="center">' + z + '</tr>';
 				
-						
+				//Total Kb
+				let totb = Math.floor( (parseInt(con.SendMonitor.Bytes) + parseInt(con.RecvMonitor.Bytes)) / 1024 );
 				
-								
+				indexProtocol.totalNodesBytes = indexProtocol.totalNodesBytes + totb;
+				
+				el.find('#net-total-traffic').html( Number( parseInt(indexProtocol.totalNodesBytes) / 1024 ).toFixed(1) + ' Mb. of total traffic.' );
+				
 			});
 			
-			el.find('#validators-tbl').empty().html( tmp );
+			el.find('#network-peers-tbl').empty().html( tmp );
 		});
 	}
 
@@ -75,14 +126,14 @@
 	
 	indexProtocol._timer = setInterval(function(){
 		updatePage();
-	}, 1000);
+	}, 3000);
 </script>
 
 
 <!-- Content Header (Page header) -->
 <section class="content-header">
   <h1>
-	INDEXProtocol Network <small>Testnet</small>
+	INDEXProtocol Network	<small>Testnet network status</small>
   </h1>
   <ol class="breadcrumb">
 	<!--
@@ -105,7 +156,7 @@
 		  <span class="info-box-number">
 			<font id="latest-block-height"></font>
 			<br />
-			<font id="total-validators"></font>
+			<font id="total-peers-blockchain"></font>
 		  </span>
 		</div>
 		<!-- /.info-box-content -->
@@ -164,7 +215,7 @@
 		<!-- TABLE: LATEST ORDERS -->
 	  <div class="box box-info"> 
 		<div class="box-header with-border">
-		  <h3 class="box-title">Validators list</h3>
+		  <h3 class="box-title">Network nodes status</h3>
 <!--
 		  <div class="box-tools pull-right">
 			<button type="button" class="btn btn-box-tool" data-widget="collapse"><i class="fa fa-minus"></i>
@@ -181,12 +232,13 @@
 			  <tr align="center" style="text-align:center;">
 			    <th style="text-align:center;">Node</th>
 				<th style="text-align:center;">Location</th>
-				<th style="text-align:center;width:200px;">Address</th>
-				<th style="text-align:center;width:200px;">Public Key (Ed25519)</th>
-				<th style="text-align:center;">Power</th>
+				<th style="text-align:center;">NodeID</th>
+								
+				<th style="text-align:left;width:200px;">Send connection</th>
+				<th style="text-align:left;width:200px;">Recv connection</th>
 			  </tr>
 			  </thead>
-			  <tbody id="validators-tbl">
+			  <tbody id="network-peers-tbl">
 				
 			  </tbody>
 			</table>
@@ -195,9 +247,10 @@
 		</div>
 		<!-- /.box-body -->
 		<div class="box-footer clearfix">
-		  <!--<a href="javascript:void(0)" class="btn btn-sm btn-info btn-flat pull-left">Place New Order</a>
+		  <!--<a href="javascript:void(0)" class="btn btn-sm btn-info btn-flat pull-left">Place New Order</a>-->
+		  <span style="" class="pull-left" id="net-total-traffic"></span>
 		  <a href="javascript:void updateNetworkInfo();" class="btn btn-sm btn-default btn-flat pull-right">
-			<i class="fa fa-sync"></i> Update</a>-->
+			<i class="fa fa-sync"></i> Update</a>
 		</div>
 		<!-- /.box-footer -->
 	  </div>
@@ -212,5 +265,5 @@
 
 <script>
 updatePage();
-updateValidatorsInfo();
+updateNetworkInfo();
 </script>
