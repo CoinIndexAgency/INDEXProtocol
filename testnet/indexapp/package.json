@@ -13,15 +13,15 @@
     },
     "dependencies": {
         "async": "^2.6",
-        "js-abci": "github:CoinIndexAgency/js-abci#4.0.2",
+        "bs58": "4.0.1",
+        "fast-json-stable-stringify": "2.0.0",
+        "js-abci": "github:CoinIndexAgency/js-abci#4.0.4",
+        "merkletreejs": "git+https://github.com/CoinIndexAgency/merkletreejs.git#master",
+        "moment": "2.*",
         "pretty-hrtime": "^1.0",
         "rocksdb": "github:Level/rocksdb#v3.0.3",
-        "underscore": "^1.9",
-        "yieldable-json": "^1.0"
+        "secp256k1": "^3.6.2",
+        "underscore": "^1.9"
     },
-    "_unusedDeps": {
-        "rocksdb": "^3.0.3",
-        "fast-json-stable-stringify": "^2.0",
-        "leveldown": "github:Level/leveldown#v5.0.0-1"
-    }
+    "_unusedDeps": {}
 }
