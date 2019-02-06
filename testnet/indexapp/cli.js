@@ -42,6 +42,69 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 */	
 	
 	let dataSources = {
+		'coinMarketCap' : {
+			name : 'CoinMarketCap',
+			site : 'https://coinmarketcap.com',
+			country : 'UNK'
+		},
+		'cryptoCompare' : {
+			name : 'CryptoCompare',
+			site : 'https://www.cryptocompare.com',
+			country : 'UNK'
+		},
+		'coinGecko' : {
+			name : 'CoinGecko',
+			site : 'https://www.coingecko.com',
+			country : 'UNK'
+		},
+		'worldCoinIndex' : {
+			name : 'WorldCoinIndex',
+			site : 'https://www.worldcoinindex.com',
+			country : 'UNK'
+		},
+		'coinLib' : {
+			name : 'CoinLib',
+			site : 'https://coinlib.io',
+			country : 'UNK'
+		},
+		'coinRanking' : {
+			name : 'CoinRanking',
+			site : 'https://coinranking.com',
+			country : 'UNK'
+		},
+		'coinDesc' : {
+			name : 'CoinDesc',
+			site : 'https://www.coindesk.com',
+			country : 'UNK'
+		},
+		'bitcoinAverage' : {
+			name : 'BitcoinAverage',
+			site : 'https://bitcoinaverage.com',
+			country : 'UNK'
+		},
+		'cryptonator' : {
+			name : 'Cryptonator',
+			site : 'https://cryptonator.com',
+			country : 'UNK'
+		},
+		'coinPaprika' : {
+			name : 'CoinPaprika',
+			site : 'https://coinpaprika.com',
+			country : 'UNK'
+		},
+		'coinBasePro' : {
+			name : 'CoinBasePro',
+			site : 'https://pro.coinbase.com',
+			country : 'UNK'
+		},
+		'bitcoinCharts' : {
+			name : 'BitcoinCharts',
+			site : 'https://bitcoincharts.com',
+			country : 'UNK'
+		}
+	};
+		
+		/*
 		'hitbtc' : {
 			name : 'HitBTC',
 			site : 'https://hitbtc.com',
@@ -228,8 +291,9 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 			country: 'UNK',
 			api: 'https://api.cobinhood.com/v1/market/trades/BTC-USD?limit=50'
 		}
+		
 	};
-	
+	*/
 	console.log('1. Create Pub/Priv key for all of data sources');
 	
 	_.each(dataSources, function(d, key){

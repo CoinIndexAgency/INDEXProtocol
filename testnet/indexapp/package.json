@@ -13,15 +13,27 @@
     },
     "dependencies": {
         "async": "^2.6",
+        "bitcoinaverage": "*",
+        "bitcoincharts-promise": "*",
         "bs58": "4.0.1",
+        "coinbase-pro-feed": "*",
+        "coingecko-api": "*",
+        "coinlib-api": "*",
+        "coinmarketcap-api": "*",
+        "coinpaprika-js": "*",
+        "coinranking-api": "*",
+        "cryptocompare": "*",
+        "cryptonator": "*",
         "fast-json-stable-stringify": "2.0.0",
         "js-abci": "github:CoinIndexAgency/js-abci#4.0.4",
         "merkletreejs": "git+https://github.com/CoinIndexAgency/merkletreejs.git#master",
         "moment": "2.*",
+        "node-coindesk-api": "*",
         "pretty-hrtime": "^1.0",
         "rocksdb": "github:Level/rocksdb#v3.0.3",
         "secp256k1": "^3.6.2",
-        "underscore": "^1.9"
+        "underscore": "^1.9",
+        "worldcoinindex-api": "*"
     },
     "_unusedDeps": {}
 }
