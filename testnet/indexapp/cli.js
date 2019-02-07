@@ -42,6 +42,14 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 */	
 	
 	let dataSources = {
+		'cryptofacilities' : {
+			name : 'CryptoFacilities',
+			site : 'https://www.cryptofacilities.com',
+			country : 'UK', 
+			api: 'https://www.cryptofacilities.com/derivatives/api/v3'
+		}
+		/**
+		
 		'coinMarketCap' : {
 			name : 'CoinMarketCap',
 			site : 'https://coinmarketcap.com',
@@ -101,7 +109,7 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 			name : 'BitcoinCharts',
 			site : 'https://bitcoincharts.com',
 			country : 'UNK'
-		}
+		} **/
 	};
 		
 		/*

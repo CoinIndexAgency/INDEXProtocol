@@ -28,7 +28,9 @@ const dataConn = {
 	bitcoinAverage 	: null,
 	coinDesc		: require('node-coindesk-api'),
 	worldCoinIndex	: null,
-	bitcoinCharts 	: require('bitcoincharts-promise')
+	bitcoinCharts 	: fetch, //use own code
+	cryptonator		: fetch,//require('cryptonator'),
+	cryptoFacilities: fetch
 };
 
 // returns Buffer
@@ -45,7 +47,7 @@ function getRateTpl(){
 			type	: 'IND', //index
 			side	: '',
 			ts		: 0,
-			pts		: new Date().getTime(), //datateime of processing
+			//pts		: new Date().getTime(), //datateime of processing
 			excode	: 0,
 			pubKey	: '', //public Key of source 
 			sign	: '',
@@ -59,7 +61,6 @@ function getRateTpl(){
 
 const coinLib			= require('coinlib-api');
 const coinRanking 		= require('coinranking-api');
-const cryptonator		= require('cryptonator');
 const coinPaprika 		= require('coinpaprika-js');
 const coinBasePro   	= require('coinbase-pro-feed'); //WS realtime module
 
@@ -73,7 +74,7 @@ const coinBasePro   	= require('coinbase-pro-feed'); //WS realtime module
 //add CME & cryptofacilities
 //add localbitcoins if possible
 //add CoinApi.io free (15 min) - whats data from??
-//add DataLight
+//add DataLight (data from coinmarkedcap
 
 //Open datasource keys 
 const sourceKeys	= JSON.parse( fs.readFileSync('./datasource.keys.json', {encoding:'utf8'}) );
@@ -81,7 +82,7 @@ const sourceKeys	= JSON.parse( fs.readFileSync('./datasource.keys.json', {encodi
 const dataFeed	= {
 	//OK
 	coinMarketCap	: {
-		"enabled"	: 	false,
+		"enabled"	: 	true,
 		"email"		:	"indexprotocol@coinindex.agency",
 		"apikey"	:	"ef188838-e4dd-4e47-8fb0-113c80bbbbe6",
 		"interval"	:	5 * 60, //5 min TEST
@@ -90,11 +91,12 @@ const dataFeed	= {
 		"updated"	: 0, //UTC of last succsessful responce
 		"loaded"	: 0, //UTC loading data (local)
 		"_raw"		: '',
+		"lastHash"	: '',
 		"rate"		: null //latest rate, object 
 	},
 	//OK
 	cryptoCompare	: {
-		"enabled"	: 	false,
+		"enabled"	: 	true,
 		"email"		:	"indexprotocol@coinindex.agency",
 		"apikey"	:	"d333f8c2fd912718229a9b6c52a8d5ab60b76917167f186ba4777e8927756c5f",
 		"interval"	:	1 * 60, //1 min	
@@ -103,22 +105,24 @@ const dataFeed	= {
 		"updated"	: 	0, //UTC of last succsessful responce
 		"loaded"	: 	0, //UTC loading data (local)
 		"_raw"		: 	'',
+		"lastHash"	: '',
 		"rate"		: 	null //latest rate, object
 	},
 	//OK
 	coinGecko		: {
-		"enabled"	: 	false,
+		"enabled"	: 	true,
 		"interval"	:	3, //3 sec	
 		
 		"nonce"		: 	0, //counter of query 
 		"updated"	: 	0, //UTC of last succsessful responce
 		"loaded"	: 	0, //UTC loading data (local)
 		"_raw"		: 	'',
+		"lastHash"	: '',
 		"rate"		: 	null //latest rate, object 
 	},
 	//OK
 	bitcoinAverage	: {
-		"enabled"	: 	false,
+		"enabled"	: 	true,
 		"apikey"	:	"NDA5M2M5M2U2NTBjNGVlMWE1YjE0MmRlYzg1NmJhM2M",  //pubKey	
 		"secret"	:	"ZTMwYzNiZWVhNzU4NGI0Y2JiYTRlODkzZmE3YTExZjZkMzZhYWFjMGU0Mzk0YTYxOTk1OTdmNWVlZjg3NjM0OA",
 		"interval"	:	10 * 60,	//10 min
@@ -127,17 +131,19 @@ const dataFeed	= {
 		"updated"	: 	0, //UTC of last succsessful responce
 		"loaded"	: 	0, //UTC loading data (local)
 		"_raw"		: 	'',
+		"lastHash"	: '',
 		"rate"		: 	null //latest rate, object 
 	},
 	//OK
 	coinDesc		: {
-		"enabled"	: 	false,
+		"enabled"	: 	true,
 		"interval"	:	3, //3 sec	
 		
 		"nonce"		: 	0, //counter of query 
 		"updated"	: 	0, //UTC of last succsessful responce
 		"loaded"	: 	0, //UTC loading data (local)
 		"_raw"		: 	'',
+		"lastHash"	: '',
 		"rate"		: 	null //latest rate, object 
 	},
 	//Fail with usd pairs
@@ -150,10 +156,23 @@ const dataFeed	= {
 		"updated"	: 	0, //UTC of last succsessful responce
 		"loaded"	: 	0, //UTC loading data (local)
 		"_raw"		: 	'',
+		"lastHash"	: '',
 		"rate"		: 	null //latest rate, object 		
 	},
-	
+	//OK
 	bitcoinCharts	: {
+		"enabled"	: 	true,
+		"interval"	:	15 * 60, //15 min
+		
+		"nonce"		: 	0, //counter of query 
+		"updated"	: 	0, //UTC of last succsessful responce
+		"loaded"	: 	0, //UTC loading data (local)
+		"_raw"		: 	'',
+		"lastHash"	: '',
+		"rate"		: 	null //latest rate, object
+	},
+	
+	cryptoFacilities : {
 		"enabled"	: 	true,
 		"interval"	:	3, //15 min
 		
@@ -161,6 +180,20 @@ const dataFeed	= {
 		"updated"	: 	0, //UTC of last succsessful responce
 		"loaded"	: 	0, //UTC loading data (local)
 		"_raw"		: 	'',
+		"lastHash"	: '',
+		"rate"		: 	null //latest rate, object
+	},
+	
+	//Disable, use IP/address checkig
+	cryptonator		: {
+		"enabled"	: 	false,
+		"interval"	:	30, //15 min
+		
+		"nonce"		: 	0, //counter of query 
+		"updated"	: 	0, //UTC of last succsessful responce
+		"loaded"	: 	0, //UTC loading data (local)
+		"_raw"		: 	'',
+		"lastHash"	: '',
 		"rate"		: 	null //latest rate, object
 	}
 };
@@ -368,37 +401,7 @@ events.on('fetchData:worldCoinIndex', function(src){
 		
 		console.dir(data, {depth:16, colors: true});
 		
-		
-		
 	}).catch(console.error);
-	
-	
-	/**
-	
-		api.getCurrentPrice().then(
-			function(data){
-				let ts = new Date().getTime();
-				dataFeed[ src ]._raw = data;
-				
-				//@todo: add other currency (EUR, GBP)
-				//@todo: add othre index, check asset
-				if (data && data.bpi && data.bpi.USD && data.bpi.USD.rate_float){
-					dataFeed[ src ].loaded = ts;
-					
-					let rate = getRateTpl();
-						rate.id 		= dataFeed[ src ].nonce;
-						rate.symbol		= 'BTC/USD_BPI';
-						rate.ts 		= new Date( data.time.updated ).getTime();
-						rate.excode		= src.toLowerCase();
-						rate.total		= data.bpi.USD.rate_float * fixedExponent;
-						rate.price		= rate.total;
-					
-						//let's sign and commit to chain
-						events.emit('signRate', rate, src);					
-				}			  
-			}
-		).catch(console.error);
-	*/
 });
 
 events.on('fetchData:bitcoinCharts', function(src){
@@ -409,62 +412,123 @@ events.on('fetchData:bitcoinCharts', function(src){
 	//@todo: state nonce and all data to persistent storage (RocksDb)
 	dataFeed[ src ].nonce++;
 	
-	api.getPrice({timeframe: 1, resolution: '30-min'}).then(function(data){
+	api('http://api.bitcoincharts.com/v1/weighted_prices.json').then(res => res.json()).then(function(data){
 		
+		let ts = new Date().getTime();
+		dataFeed[ src ]._raw = data;
 		
-		console.dir(data, {depth:16, colors: true});
-		
-		
-		
-	}).catch(console.error);
-	
-	
-	/**
-	
-	api.getTicker('btc', 'usd').then(function(data){
-		
-		
-		console.dir(data, {depth:16, colors: true});
-		
-		
-		
-	}).catch(console.error);
-	**/
-	
-	/**
-	
-		api.getCurrentPrice().then(
-			function(data){
-				let ts = new Date().getTime();
-				dataFeed[ src ]._raw = data;
-				
-				//@todo: add other currency (EUR, GBP)
-				//@todo: add othre index, check asset
-				if (data && data.bpi && data.bpi.USD && data.bpi.USD.rate_float){
-					dataFeed[ src ].loaded = ts;
+		if (data && data.USD && data.USD['24h']){
+			dataFeed[ src ].loaded = ts;
 					
-					let rate = getRateTpl();
-						rate.id 		= dataFeed[ src ].nonce;
-						rate.symbol		= 'BTC/USD_BPI';
-						rate.ts 		= new Date( data.time.updated ).getTime();
-						rate.excode		= src.toLowerCase();
-						rate.total		= data.bpi.USD.rate_float * fixedExponent;
-						rate.price		= rate.total;
-					
-						//let's sign and commit to chain
-						events.emit('signRate', rate, src);					
-				}			  
-			}
-		).catch(console.error);
-	*/
+			let rate = getRateTpl();
+				rate.id 		= dataFeed[ src ].nonce;
+				rate.symbol		= 'BTC/USD_24HWA';
+				rate.ts 		= new Date().getTime();
+				rate.excode		= src.toLowerCase();
+				rate.total		= data.USD['24h'] * fixedExponent;
+				rate.price		= rate.total;
+			
+				//let's sign and commit to chain
+				events.emit('signRate', rate, src);
+		
+			//console.dir(data, {depth:16, colors: true});
+		}
+	
+	}).catch(console.error);
 });
 
+events.on('fetchData:cryptoFacilities', function(src){
+	console.log(new Date() + ' :: fetchData: ' + src);
+	
+	let api = dataConn[ src ];
+	
+	//@todo: state nonce and all data to persistent storage (RocksDb)
+	dataFeed[ src ].nonce++;
+	
+	api('https://www.cryptofacilities.com/derivatives/api/v3/tickers').then(res => res.json()).then(function(data){
+		
+		let ts = new Date().getTime();
+		dataFeed[ src ]._raw = data;
+		
+		if (data && data.result && data.result == 'success' && data.tickers){
+			dataFeed[ src ].loaded = ts;
+					
+			//Use two = Reference Rate and RealTime Index		
+			
+			_.each(data.tickers, function(v){
+				if ((v.symbol === 'in_xbtusd') || (v.symbol === 'rr_xbtusd')){
+					let rate = getRateTpl();
+						rate.id 		= dataFeed[ src ].nonce;
+						rate.ts			= new Date( v.lastTime ).getTime();
+						rate.excode		= src.toLowerCase();
+				
+					if (v.symbol == 'in_xbtusd'){
+						rate.symbol		= 'CME CF Real-Time Indices';
+					}
+					else
+					if (v.symbol == 'rr_xbtusd'){
+						rate.symbol		= 'CME CF Reference Rates';
+						rate.id++;
+					}
+					
+					rate.price		= v.last * fixedExponent;
+					rate.total		= rate.price;
+					
+					//let's sign and commit to chain
+					events.emit('signRate', rate, src);
+				}				
+			});
+
+			//console.dir(data, {depth:16, colors: true});
+		}
+	
+	}).catch(console.error);
+});
+
+events.on('fetchData:cryptonator', function(src){
+	console.log(new Date() + ' :: fetchData: ' + src);
+	
+	let api = dataConn[ src ];
+	
+	//@todo: state nonce and all data to persistent storage (RocksDb)
+	dataFeed[ src ].nonce++;
+	
+	//
+	api('https://api.cryptonator.com/api/ticker/btc-usd').then(res => res.json()).then(function(data){
+		
+		let ts = new Date().getTime();
+		dataFeed[ src ]._raw = data;
+		
+		if (data && data.success && data.success == true && data.ticker){
+			dataFeed[ src ].loaded = ts;
+			
+			let rate = getRateTpl();
+				rate.id 		= dataFeed[ src ].nonce;
+				rate.symbol		= 'BTC/USD'; //volume_weighted
+				rate.ts 		= new Date( data.timestamp ).getTime();
+				rate.excode		= src.toLowerCase();
+				rate.price		= Math.trunc(parseFloat(data.ticker.price) * fixedExponent);
+				rate.total		= rate.price;
+			
+				//let's sign and commit to chain
+				events.emit('signRate', rate, src);
+		}
+	}).catch(console.error);
+});
 //===========
 events.on('signRate', function(rate, src){
 	dataFeed[ src ].updated = rate.ts;
 	
+	rate.price = Math.trunc( rate.price );
+	rate.total = Math.trunc( rate.total );
+	
 	//hash this 
 	let hash = sha256( JSON.stringify( rate ) );
+	
+	//prevent double sending
+	if (dataFeed[ src ].lastHash == hash) return;
+	
+	dataFeed[ src ].lastHash = hash;
 	
 	//add pubKey 
 	rate.pubKey = sourceKeys.keys[ src ].pubKey;
@@ -477,7 +541,7 @@ events.on('signRate', function(rate, src){
 	rate.sign = secp256k1.sign(hash, privKey).signature.toString('hex');
 	
 	//@todo: add sing from Node? Protocol?
-	console.debug( rate );
+	console.log( JSON.stringify(rate) );
 	
 	if (rate && rate.price && rate.pubKey && rate.sign && rate.excode && rate.id){
 		
@@ -514,9 +578,11 @@ events.on('sendTx', function(data){
 						const parsedData = JSON.parse(rawData);
 						
 						if (parsedData && parsedData.result && parsedData.result.code == 0){
-							console.log('Tx: ' + parsedData.result.hash);
+							console.log('tx: ' + parsedData.result.hash);
 						}
-						else{
+						else
+						if (parsedData.error.code != -32603)
+						{
 							console.log('\n');
 							console.debug(parsedData);
 							console.log('\n');
@@ -549,8 +615,8 @@ _.each(dataFeed, function(v, source){
 });
 
 
-
-
-
+// Here we send the ready signal to PM2
+if (process.send)
+	process.send('ready');
 
 console.log('');
