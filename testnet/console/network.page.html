@@ -45,10 +45,12 @@
 			var obj = res.result;
 			var tmp = '';
 						
-			let totPeers = obj.n_peers;
+			let totPeers = parseInt(obj.n_peers) + 1; //including current
 				el.find('#total-peers-blockchain').html( totPeers + ' peers' );
 				
 			indexProtocol.totalNodesBytes = 0;
+			
+			let _tpl = {};
 			
 			_.each(obj.peers, function(v, i){
 				let t = v.node_info.moniker.substring(0, 2);
@@ -73,12 +75,12 @@
 					avgRate = Number( parseInt(con.SendMonitor.AvgRate) / 1024 ).toFixed(1);//.toPrecision(1);
 					bytes = Math.floor( parseInt(con.SendMonitor.Bytes) / 1024 ); 
 					
-					if (bytes < 1024)	bytes = bytes + ' Kb.'; else
+					if (bytes < 1024)	bytes = bytes + ' Kb'; else
 					if (bytes > 1024 && bytes < (1024*1024))
-						bytes = Math.floor( parseInt(bytes) / 1024 ) + ' Mb.'; else 
-						bytes = Math.floor( parseInt(bytes) / (1024*1024) ) + ' Gb.';
+						bytes = Math.floor( parseInt(bytes) / 1024 ) + ' Mb'; else 
+						bytes = Math.floor( parseInt(bytes) / (1024*1024) ) + ' Gb';
 						
-				sendStat = sendStat + ' ' + '<span style="cursor:pointer;" title="Current speed, Kb/sec.">'+curRate+'</span>' + '/<span style="cursor:pointer;" title="Average speed, Kb/sec.">' + avgRate + '</span> Kbps;&nbsp;&nbsp;' + bytes;	
+				sendStat = sendStat + ' ' + '<span style="cursor:pointer;" title="Current speed, Kb/sec.">'+curRate+'</span>' + '/<span style="cursor:pointer;" title="Average speed, Kb/sec.">' + avgRate + '</span> Kb;&nbsp;' + bytes;	
 				
 				
 				
@@ -94,29 +96,54 @@
 					avgRate = Number( parseInt(con.RecvMonitor.AvgRate) / 1024 ).toFixed(1);//.toPrecision(1);
 					bytes = Math.floor( parseInt(con.RecvMonitor.Bytes) / 1024 ); 
 					
-					if (bytes < 1024)	bytes = bytes + ' Kb.'; else
+					if (bytes < 1024)	bytes = bytes + ' Kb'; else
 					if (bytes > 1024 && bytes < (1024*1024))
-						bytes = Math.floor( parseInt(bytes) / 1024 ) + ' Mb.'; else 
-						bytes = Math.floor( parseInt(bytes) / (1024*1024) ) + ' Gb.';
+						bytes = Math.floor( parseInt(bytes) / 1024 ) + ' Mb'; else 
+						bytes = Math.floor( parseInt(bytes) / (1024*1024) ) + ' Gb';
 						
 				recvStat = recvStat + ' ' + '<span style="cursor:pointer;" title="Current speed, Kb/sec.">'+curRate+'</span>' + '/<span style="cursor:pointer;" title="Average speed, Kb/sec.">' + avgRate + '</span> Kbps; &nbsp;&nbsp;' + bytes;
-						
 				
-				let z = '<td><a href="http://rpc.'+v.node_info.moniker+'.testnet.indexprotocol.online/" target="_new">'+v.node_info.moniker+'</a></td><td>'+nodeLocation+'</td>' + 
-						'<td>'+v.node_info.id+'</td>' + 
-						'<td align="left">'+sendStat+'</td>' + 
-						'<td align="left">'+recvStat+'</td>';  
-						
-				tmp = tmp + '<tr align="center">' + z + '</tr>';
+				/*
+				let nodeHeight = v.sync_info.latest_block_height;
+				
+				if (v.sync_info.catching_up == true){
+					nodeHeight = nodeHeight + '&nbsp;<i class="fas fa-sync" style="color:red;font-weight:bold;"></i>';
+				}
+				*/
 				
 				//Total Kb
 				let totb = Math.floor( (parseInt(con.SendMonitor.Bytes) + parseInt(con.RecvMonitor.Bytes)) / 1024 );
 				
 				indexProtocol.totalNodesBytes = indexProtocol.totalNodesBytes + totb;
 				
-				el.find('#net-total-traffic').html( Number( parseInt(indexProtocol.totalNodesBytes) / 1024 ).toFixed(1) + ' Mb. of total traffic.' );
 				
+				let z = '<td><a href="http://rpc.'+v.node_info.moniker+'.testnet.indexprotocol.online/" target="_new">'+v.node_info.moniker+'</a></td><td>'+nodeLocation+'</td>' + 
+						'<td>'+v.node_info.id+'</td>' + 
+						'<td align="left">'+sendStat+'</td>' + 
+						'<td align="left">'+recvStat+'</td>';
+				// '<td align="center">'+nodeHeight+'</td>
+				
+				_tpl[ v.node_info.moniker ] = '<tr align="center">' + z + '</tr>';
+					//totb: Number( parseInt(indexProtocol.totalNodesBytes) / 1024 ).toFixed(1) + ' Mb. of total traffic.'
+				
+
+				/*
+				tmp = tmp + '<tr align="center">' + z + '</tr>';
+				
+				el.find('#net-total-traffic').html( Number( parseInt(indexProtocol.totalNodesBytes) / 1024 ).toFixed(1) + ' Mb. of total traffic.' );
+				*/
 			});
+			
+			let _z = _.keys( _tpl );
+				_z.sort();
+				
+				_.each(_z, function(v){
+					tmp = tmp + _tpl[ v ];
+				});
+				
+				
+			
+			el.find('#net-total-traffic').html( Number( parseInt(indexProtocol.totalNodesBytes) / 1024 ).toFixed(1) + ' Mb. of total traffic.' );
 			
 			el.find('#network-peers-tbl').empty().html( tmp );
 		});
@@ -236,6 +263,8 @@
 								
 				<th style="text-align:left;width:200px;">Send connection</th>
 				<th style="text-align:left;width:200px;">Recv connection</th>
+				
+				<!--<th style="text-align:center;">Height</th>-->
 			  </tr>
 			  </thead>
 			  <tbody id="network-peers-tbl">
@@ -243,7 +272,7 @@
 			  </tbody>
 			</table>
 		  </div>
-		  <!-- /.table-responsive -->
+		  <!-- /.table-responsive --> 
 		</div>
 		<!-- /.box-body -->
 		<div class="box-footer clearfix">

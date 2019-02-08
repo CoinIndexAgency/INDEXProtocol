@@ -4,11 +4,52 @@ $(function () {
   
   indexProtocol = _.extend({
 	run: function(){
+		//search 
+		/*
+		$('#sidebar-search-form').submit(function(e){
+			$(e.currentTarget).preventDefault();
+		});
+		*/
+		
+		$('#search-btn').on('click', function(e){
+			var val = $('#chain-search-control').val();
+				
+			if (val)	indexProtocol.findAndOpen( val );
+		});
+		
+		$('#chain-search-control').on('keyup', function(e){
+			//console.log( e );
+			if (e.keyCode == 13){
+				var val = $('#chain-search-control').val();
+				
+				if (val)	indexProtocol.findAndOpen( val );
+			}				
+		});
+		
+		if (_datasourceKeys){
+			this.dataSources = _datasourceKeys;
+				_datasourceKeys = null;
+		}
 		
 		
-		
-		
+		//show default page
 		this.overviewPage();
+	},
+	
+	findAndOpen: function(val){
+		console.log('Search for: ' + val + ' (isNumber: '+$.isNumeric( val )+')' );
+		
+		if ($.isNumeric( val )){
+				val = parseInt(val);
+				
+				if (val > 0){
+					//possible block height?
+					indexProtocol.blockPage( val );
+				}
+			}	
+		
+		
+		
 	},
 	
 	_timer: null,	
@@ -37,22 +78,7 @@ $(function () {
 	},
 	
 	/*
-	'Quoine'	=>	'https://api.quoine.com/executions?product_id=1&limit=1000&page=1',
-	'GDAX'		=>	'https://api.gdax.com/products/BTC-USD/trades?limit=100',
-	'BitBay'	=>	'https://bitbay.net/API/Public/BTCUSD/trades.json?sort=desc',
-	'QuadrigaCX'	=>	'https://api.quadrigacx.com/v2/transactions?book=btc_usd&time=hour',
-	'Independent Reserve'	=>	'https://api.independentreserve.com/Public/GetRecentTrades?primaryCurrencyCode=xbt&secondaryCurrencyCode=usd&numberOfRecentTradesToRetrieve=50',
-	'Gatecoin'	=>	'https://api.gatecoin.com/Public/Transactions/BTCUSD?Count=250',
-	'Waves DEX'	=>	'http://marketdata.wavesplatform.com/api/trades/BTC/USD/100',
-	'Abucoins'	=>	'https://api.abucoins.com/products/BTC-USD/trades?limit=200',
-	'Bitsane'	=>	'https://bitsane.com/api/public/trades?pair=BTC_USD&limit=250',
-	'Bitex.la'	=>	'https://bitex.la/api-v1/rest/btc_usd/market/transactions',
-	'Bitlish'	=>	'https://bitlish.com/api/v1/trades_history?pair_id=btcusd',
-	'SouthXchange'	=>	'https://www.southxchange.com/api/trades/BTC/USD',
-	'Bisq'	=>	'https://markets.bisq.network/api/trades?market=btc_usd&limit=250&format=json&sort=desc',
-	'Coingi'	=>	'https://api.coingi.com/current/transactions/btc-usd/250',
-	'LEOxChange'	=>	'https://restapi.leoxchange.com/Ticker/TradeHistory?coinPair=BTC/USD&rows=100',
-	'Cobinhood'		=>	'https://api.cobinhood.com/v1/market/trades/BTC-USD?limit=50',
+	
 );
 	
 	*/
@@ -146,9 +172,103 @@ $(function () {
 			site: 'https://itbit.com',
 			country: 'UNK',
 			api: 'https://api.itbit.com/v1/markets/XBTUSD/trades'
+		},
+		'quoine' : {
+			name: 'Quoine',
+			site: 'https://quoine.com',
+			country: 'UNK',
+			api: 'https://api.quoine.com/executions?product_id=1&limit=1000&page=1'
+		},
+		'gdax' : {
+			name: 'GDAX',
+			site: 'https://gdax.com',
+			country: 'UNK',
+			api: 'https://api.gdax.com/products/BTC-USD/trades?limit=100'
+		},
+		'bitbay' : {
+			name: 'BitBay',
+			site: 'https://bitbay.net',
+			country: 'UNK',
+			api: 'https://bitbay.net/API/Public/BTCUSD/trades.json?sort=desc'
+		},
+		'quadrigacx' : {
+			name: 'QuadrigaCX',
+			site: 'https://quadrigacx.com',
+			country: 'UNK',
+			api: 'https://api.quadrigacx.com/v2/transactions?book=btc_usd&time=hour'
+		},
+		'independentreserve' : {
+			name: 'Independent Reserve',
+			site: 'https://independentreserve.com',
+			country: 'UNK',
+			api: 'https://api.independentreserve.com/Public/GetRecentTrades?primaryCurrencyCode=xbt&secondaryCurrencyCode=usd&numberOfRecentTradesToRetrieve=50'
+		},
+		'gatecoin' : {
+			name: 'Gatecoin',
+			site: 'https://gatecoin.com',
+			country: 'UNK',
+			api: 'https://api.gatecoin.com/Public/Transactions/BTCUSD?Count=250'
+		},
+		'wavesdex' : {
+			name: 'Waves DEX',
+			site: 'http://wavesplatform.com',
+			country: 'UNK',
+			api: 'http://marketdata.wavesplatform.com/api/trades/BTC/USD/100'
+		},
+		'abucoins' : {
+			name: 'Abucoins',
+			site: 'https://abucoins.com',
+			country: 'UNK',
+			api: 'https://api.abucoins.com/products/BTC-USD/trades?limit=200'
+		},
+		'bitsane' : {
+			name: 'Bitsane',
+			site: 'https://bitsane.com',
+			country: 'UNK',
+			api: 'https://bitsane.com/api/public/trades?pair=BTC_USD&limit=250'
+		},
+		'bitexla' : {
+			name: 'Bitex.la',
+			site: 'https://bitex.la',
+			country: 'UNK',
+			api: 'https://bitex.la/api-v1/rest/btc_usd/market/transactions'
+		},
+		'bitlish' : {
+			name: 'Bitlish',
+			site: 'https://bitlish.com',
+			country: 'UNK',
+			api: 'https://bitlish.com/api/v1/trades_history?pair_id=btcusd'
+		},
+		'southxchange' : {
+			name: 'SouthXchange',
+			site: 'https://www.southxchange.com',
+			country: 'UNK',
+			api: 'https://www.southxchange.com/api/trades/BTC/USD'
+		},
+		'bisq' : {
+			name: 'Bisq',
+			site: 'https://bisq.network',
+			country: 'UNK',
+			api: 'https://markets.bisq.network/api/trades?market=btc_usd&limit=250&format=json&sort=desc'
+		},
+		'coingi' : {
+			name: 'Coingi',
+			site: 'https://coingi.com',
+			country: 'UNK',
+			api: 'https://api.coingi.com/current/transactions/btc-usd/250'
+		},
+		'LEOxChange' : {
+			name: 'Coingi',
+			site: 'https://leoxchange.com',
+			country: 'UNK',
+			api: 'https://restapi.leoxchange.com/Ticker/TradeHistory?coinPair=BTC/USD&rows=100'
+		},
+		'Cobinhood' : {
+			name: 'Coingi',
+			site: 'https://cobinhood.com',
+			country: 'UNK',
+			api: 'https://api.cobinhood.com/v1/market/trades/BTC-USD?limit=50'
 		}
-		
-		
 	},
 	
 	
@@ -178,6 +298,23 @@ $(function () {
 	blockPage: function(height){
 		var el = $('#console-content-wrapper');
 			el.empty().load('/console/block.page.html?height=' + height);
+	},
+	
+	walletPage: function(){
+		var el = $('#console-content-wrapper');
+			el.empty().load('/console/wallet.page.html');
+	},
+	
+	datasourcePage: function(){
+		var el = $('#console-content-wrapper');
+			el.empty().load('/console/datasource.page.html');
+	},
+	
+	
+	test: function(){
+		$.getJSON("https://rpc.testnet.indexprotocol.online/tx_search?query=\"year='2019'\"", function(res){ 
+			console.dir( res );
+		});
 	}
 	
   });

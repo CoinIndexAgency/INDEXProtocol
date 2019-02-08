@@ -2,7 +2,7 @@
 
 let createServer 	= require('js-abci');
 const crypto 		= require('crypto');
-const { spawn } 	= require('child_process');
+//const { spawn } 	= require('child_process');
 const fs			= require('fs');
 let _				= require('underscore');
 var emitter			= require('events');
@@ -11,6 +11,7 @@ var prettyHrtime 	= require('pretty-hrtime');
 var rocksdown 		= require('rocksdb');
 var async 			= require('async');
 const secp256k1		= require('secp256k1');
+let bs58			= require('bs58');
 let stringify 		= require('fast-json-stable-stringify');
 
 process.on('uncaughtException', (err) => {
@@ -35,7 +36,7 @@ process.on('exit', (code) => {
 
 //test private key for system account
 const godKey = '178194397bd5290a6322c96ea2ff61b65af792397fa9d02ff21dedf13ee9bb33';
-const storeLatestBlocks = 900; //how many blocks decoded and stored
+const storeLatestBlocks = 300; //how many blocks decoded and stored
 const fixedExponent = 1000000;
 
 const stateDbPath 	= '/opt/tendermint/app/db/state.db'; //stateDb
@@ -57,6 +58,20 @@ const stateDbPath 	= '/opt/tendermint/app/db/state.db'; //stateDb
 						
 		console.log('All app DB cleared and removed... OK\n\n');
 	}
+	
+	//reverto <nubblock>
+	if (process.argv.indexOf('reverto') != -1){
+		let revTo = parseInt( process.argv[ (process.argv.indexOf('reverto')+1)] ); 
+		
+		if (revTo){
+			console.log( 'WARN:  Manual revert appState to height: ' + revTo);
+			
+			//delete all from curent height up to revTo
+			
+			
+		}		
+	}
+	
 
 const stateDb 	= rocksdown( stateDbPath );
 
@@ -101,6 +116,7 @@ let indexProtocol = {
 			'appHash'		: '', 	//current AppHash (sha-256)
 //TEST			
 			'blockHeight'	: 0,	//current height  
+			'blockHash'		: '',
 			'blockStore' 	: [],  //filled by transactions (by 900 block)
 			
 			'previousAppHash' : '',
@@ -192,6 +208,15 @@ let indexProtocol = {
 						appState[ i ] = v;
 					});
 					
+					
+					if (process.argv.indexOf('dumpappstate') != -1){
+						
+						console.dir( appState, {depth:4, colors:true} );					
+						
+						process.exit();
+					}
+					
+				
 //TEST
 //appState.blockHeight = 99999;
 
@@ -209,10 +234,8 @@ let indexProtocol = {
 							console.log('loaded AppHash: ' + loadedAppHash);
 							console.log('rehash AppHash: ' + calcAppHash);
 							
-							
-							
-							/** TEST **/
-							if (1/*loadedAppHash === calcAppHash*/){
+				
+							if (loadedAppHash === calcAppHash){
 								appState.appHash = calcAppHash;
 								
 								console.log('State loaded OK\n');
@@ -221,6 +244,7 @@ let indexProtocol = {
 							}
 							else {
 								console.log('Error while appState loaded. Inconsistent data.');
+								console.log('Maybe data inconsistent. Try to run app with <cleandb> option');
 								
 								process.exit(0);						
 							}
@@ -341,12 +365,13 @@ let indexProtocol = {
 	
 	blockCommitHandler: function(height){
 		//if length of blocks more then 900
-		if (appState.blockStore.length == 900){
+		if (appState.blockStore.length == storeLatestBlocks){
 			
 			let calcAvg = {
 				symbol: 'BTC/USD',	//for testnet only
 				
 				blockHeight: height, 
+				blockHash: '',
 				
 				avgPrice: 0,
 				minPrice: 0,
@@ -368,31 +393,36 @@ let indexProtocol = {
 				timeTo: 0,  //reserved
 				
 				totalTx: 0,
-				//blocksIncluded: [], test performance
+				blocksIncluded: [], 
 				exchangesIncluded: []
 			};
 			
 			var _tx = [];
-			var _minPrice = null, _maxPrice = null;
+			var _price = [];
+			//var _hashes = []; //array of used block hash
 			
 			_.each(appState.blockStore, function(v){
+				
 				if (v.tx.length > 0){
 					_tx = _tx.concat( v.tx );
 					
-					if (v.avgQuote){
-						if (_minPrice == null || v.avgQuote.minPrice < _minPrice){
-							_minPrice = v.avgQuote.minPrice;
-						}
-						
-						if (_maxPrice == null || v.avgQuote.maxPrice > _maxPrice){
-							_maxPrice = v.avgQuote.maxPrice;
-						}
-					}
-				}
+					_.each(	v.tx, function(q){
+						if (q.price) _price.push( q.price );
+					});
+					
+					//_hashes.push( v.blockHash );
+					
+					calcAvg.blocksIncluded.push( v.height );
+				}			
+							
 			});
 			
-			calcAvg.minPrice = _minPrice;
-			calcAvg.maxPrice = _maxPrice;
+			calcAvg.minPrice = _.min( _price );
+			calcAvg.maxPrice = _.max( _price );
+			
+//console.log( [calcAvg.minPrice, calcAvg.maxPrice] );
+
+//console.log( _minPrice );
 			
 			if (_tx.length != 0){
 			
@@ -446,12 +476,17 @@ let indexProtocol = {
 				
 				calcAvg.totalTx = _tx.length;
 				
-				if (calcAvg.exchangesIncluded > 1){
+				if (calcAvg.exchangesIncluded.length > 1){
 					calcAvg.exchangesIncluded.sort();
 					calcAvg.exchangesIncluded = _.uniq( calcAvg.exchangesIncluded, true );
 				}
 			}
 			
+			/* @todo: realize sign avg quote
+			let sha256  = crypto.createHash('sha256');	
+			let _json = JSON.stringify( calcAvg );
+			let accHash = sha256.update( Buffer.from( accJson, 'utf8') ).digest('hex');
+			*/
 			//
 			appState.latestAvg = calcAvg;
 		}
@@ -548,7 +583,7 @@ console.debug( accObj );
 		saveOps.push({ type: 'put', key: 'tbl.account.' + data.addr, value: accJson });
 		//save as reverse map to fast lookup by name/altnames.
 		//@todo: Possible to optimize by one big hash-map
-		saveOps.push({ type: 'put', key: 'tbl.system.namelookup.' + accObj.name, value: data.addr });
+		saveOps.push({ type: 'put', key: 'tbl.system.namelookup.' + accObj.name, value: data.addr }); 
 
 		return true;
 	},
@@ -649,6 +684,46 @@ let server = createServer({
 		
 		console.log('Staring new chain with ID: ' + chainId);
 		console.log('Try to initialize clear evn for contracts and registry');
+		console.log(' ****** IMPORTANT!   CLEAN DB ************** ');		
+		/***
+		stateDb.close(function(){});
+		
+		console.log('Destroy ALL data from application db. All data will be losted!');
+		console.log('Clearing app state...');
+			
+		let dir = fs.readdirSync( stateDbPath );
+		
+		_.each(dir, function(f){
+			console.log('remove file: ' + f + '... ok');
+			
+			fs.unlinkSync( stateDbPath + '/' + f);			
+		});
+		
+		fs.rmdirSync( stateDbPath );
+						
+		console.log('All app DB cleared and removed... OK\n\n');
+		
+		stateDb.open(rocksOpt, function(err){
+			if (!err){
+				//waiting for status
+				var t = setInterval(function() {
+					if (stateDb.status != 'open') return;
+					
+					console.log('stateDb opened and ready');
+					clearInterval( t );								
+					
+					//OK, all DB ready to work
+					events.emit('dbReady');
+				
+				}, 100);
+			}
+			else {
+				console.log('stateDb opening error: ' + err);
+				process.exit(0);
+			}
+		});
+		**/
+		
 		
 		//default value for appState
 		appState = indexProtocol.getDefaultState();		
@@ -687,6 +762,8 @@ let server = createServer({
 		console.log('QUERY request called');
 		console.debug( request ); 
 		
+		if (stateDb.status != 'open')	return { code: 1 };
+		
 		/*
 			QUERY request called
 			RequestQuery { data: <Buffer 7a 7a 7a 7a>, path: 'getaccountaddress' }
@@ -698,20 +775,161 @@ let server = createServer({
 			
 			//var result = new Promise();
 			
+			//@todo: use browser-based account generation
+			//@todo2: add HD and seed-based account 
 			if (path === 'getaccountaddress'){
+				//generate new account (without safe)
+				const 	ecdh 	= 	crypto.createECDH('secp256k1');
+						ecdh.generateKeys();
+		
+				let privKey = ecdh.getPrivateKey();
+				let pubKey = ecdh.getPublicKey();
+				let address = '';
+
+				let sha256 = crypto.createHash('sha256');
+				let ripemd160 = crypto.createHash('ripemd160');
+				let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).digest(); // .digest('hex');
+
+					address = bs58.encode( hash );
+					
+				//simple check 
+				if (appState.accountStore[ address ])
+					return {code: 1}; 
+			
+		console.log('===========================');
+		console.log('Generate new account (TEST):');
+		console.log('privateKey: ' + privKey.toString('hex'));
+		console.log('publicKey:  ' + pubKey.toString('hex'));
+		console.log('wallet address: ' + address);
+		console.log('===========================');
+				
+				return {code: 0, value: Buffer.from(JSON.stringify( {
+					address: address,
+					pubKey:	pubKey.toString('hex'),
+					privKey: privKey.toString('hex')
+				} ), 'utf8').toString('base64')};
+				
+				
+				/**
 				return new Promise(function(resolve, reject){
 					setTimeout(function(){
 						return resolve( {code: 0, value: Buffer.from(JSON.stringify({"fuck" : 'hhhhhhhhhhhhhhhhhhhh', env: process.config }), 'utf8').toString('base64')} ); //{ code: 0, data: 'ggggg', response: 'klkhkjhkhk'});
 					}, 5000);
 				});
+				**/
+			}
+			else
+			if (path === 'getavgtx'){
+				let _height = parseInt( data.toString('utf8') );
+				
+				if (!_height)
+					return { code: 1 };
+				
+				if (_height > appState.blockHeight)
+					return { code: 1 };
+				
+				return new Promise(function(resolve, reject){
+					
+					stateDb.get('tbl.block.'+_height+'.avg', function(err, val){
+						if (!err && val){
+							console.log('Query fetch: avg tx from block #' + _height);
+							
+							if (Buffer.isBuffer(val)){
+								val = val.toString('utf8');								
+							}
+							//@todo: optimize code/decode
+							return resolve( {code: 0, value: Buffer.from(val, 'utf8').toString('base64')} );
+						}
+						else
+							return reject( {code:1} );
+					});
+					
+				});				
+			}
+			else
+			if (path === 'gettxs'){
+				let _height = parseInt( data.toString('utf8') );
+				
+				if (!_height)
+					return { code: 1 };
+				
+				if (_height > appState.blockHeight)
+					return { code: 1 };
+				
+				return new Promise(function(resolve, reject){
+					
+					stateDb.get('tbl.block.'+_height+'.tx', function(err, val){
+						if (!err && val){
+							console.log('Query fetch: all tx from block #' + _height);
+							
+							if (Buffer.isBuffer(val)){
+								val = val.toString('utf8');								
+							}
+							//@todo: optimize code/decode
+							return resolve( {code: 0, value: Buffer.from(val, 'utf8').toString('base64')} );
+						}
+						else
+							return reject( {code:1} );
+					});
+					
+				});				
+			}
+			else
+			if (path === 'getappstate'){
+				//only latest
+				//@todo: save full appState per height
+				return new Promise(function(resolve, reject){
+					
+					stateDb.get('appState', function(err, val){
+						if (!err && val){
+							console.log('Query fetch: latest appState');
+							
+							if (Buffer.isBuffer(val)){
+								val = val.toString('utf8');								
+							}
+							//@todo: optimize code/decode
+							return resolve( {code: 0, value: Buffer.from(val, 'utf8').toString('base64')} );
+						}
+						else
+							return reject( {code:1} );
+					});
+					
+				});				
+			}
+			else
+			if (path === 'getallaccounts'){
+				let maxCountAddr = 1000; //maximum of addresses
+				let _res = [];
+				
+				//@todo: use find
+				_.each(appState.accountStore, function(v, addr){
+					if (_res.length > maxCountAddr) return;
+					
+					_res.push({
+						address	:	v.address,
+						name	:	v.name,
+						height	:	v.createdBlockHeight,
+						status	:	v.status,
+						type	:	v.type,
+						nonce	: 	v.nonce,
+						pubKey	: 	v.pubKey
+					});
+					
+				});
+	
+				return {code: 0, value: Buffer.from(JSON.stringify( _res ), 'utf8').toString('base64')};
 			}
 			
+			
+			
+			/**
+			{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: stringify(appState.blockStore[0])}
+			 **/
+			
 		}
-		else
-			return { code: 0 };
 		
 		
-
+		return { code: 1 };
 		//let path = request.path;
 		
 		//let tmp = Buffer.from( path, 'utf8').toString('utf8');
@@ -765,14 +983,29 @@ let server = createServer({
 					if (!x.id || x.id == null || x.id == '')
 						return { code: 0, log: 'CET: ID can not be empty :: ' + _x  };    
 					
-					/*
-					if (x.excode && x.excode == 'bitfinex')
-						return { code: 1, log: 'CET: bitfinex Exchange is blocked!' };
-					*/
+					
+					if (x.excode && x.excode == 'rightbtc'){
+						let _price = Math.trunc( x.price / 100000000 );
+						let _amount = Math.trunc( x.amount / 100000000 );
+						let _total = Math.trunc( parseFloat( (_price * _amount)/ fixedExponent ) );
+//  3540330000, 14700, 52042851000000, 8966192506135904000
+//console.log([x.price, x.amount, _price, _amount, _total]);
+	
+						x.price = _price;
+						x.amount = _amount;						
+						x.total = _total;
+						
+//console.log(['Test', Number(x.price/fixedExponent).toFixed(3), Number(x.amount/fixedExponent).toFixed(3), Number(x.total/fixedExponent).toFixed(3)]);						
+
+						//x.total = Math.trunc(  x.total / 100000000 );
+						
+						//console.log( x );
+					}
+					//	return { code: 1, log: 'CET: RightBTC Exchange is blocked!' };
+					
 					
 					delete x._hash;
-					
-					//all passed OK
+
 					currentBlockStore.push( x );
 				}
 				
@@ -934,9 +1167,11 @@ let server = createServer({
 	},
   
 	beginBlock: function(request) {
-		//console.log('Call: BeginBlock. Height: ' + request.header.height);  
+		console.log('Call: BeginBlock. Height: ' + request.header.height);  
+		//console.log( request );  
 		
-		console.log( request.header.height + ' block proposerAddress: ' + request.header.proposerAddress.toString('hex') ); 
+		//console.log( request.header.height + ' block proposerAddress: ' + request.header.proposerAddress.toString('hex') ); 
+		appState.blockHash = request.hash.toString('hex');
 		
 		let proposerAddress = request.header.proposerAddress.toString('hex');
 		let numTx = parseInt( request.header.numTxs.toString() );
@@ -954,7 +1189,7 @@ let server = createServer({
 				
 				blockHeight: parseInt( request.header.height.toString() )
 			});
-		
+	
 		//initial current block store
 		currentBlockStore = [];
 
@@ -967,7 +1202,7 @@ let server = createServer({
   
 	endBlock: function(request){
 		let hx = parseInt( request.height.toString() );
-
+		
 		if (appState.blockStore.length == storeLatestBlocks){
 			var tmp = appState.blockStore.pop();
 			delete tmp;
@@ -976,6 +1211,7 @@ let server = createServer({
 		//lets calc some avg stat of block 
 		let avgQuote = {
 			blockHeight: hx, 
+			blockHash: appState.blockHash,
 			
 			avgPrice: 0,
 			minPrice: 0,
@@ -991,6 +1227,8 @@ let server = createServer({
 			totalTx: currentBlockStore.length,
 			exchangesIncluded: []
 		};
+		
+		let exchangesIncluded = [];
 
 		//update only non-empty block
 		if (currentBlockStore.length > 0){
@@ -1007,22 +1245,31 @@ let server = createServer({
 				
 				p.push( parseInt( v.price ) );
 				
-				if (v.excode)
-					avgQuote.exchangesIncluded.push( v.excode );
+				if (v.excode && exchangesIncluded.indexOf(v.excode) == -1)
+					exchangesIncluded.push( v.excode );
 			});
 			
 			if (x > 0) avgQuote.avgPrice = parseInt( x / currentBlockStore.length );
 			if (y > 0) avgQuote.totalAmount = parseFloat( y );
 			if (z > 0) avgQuote.totalVolume = parseFloat( z );
 			
+//console.log('\n\n');
+//console.log(p);
+			
 			avgQuote.minPrice = _.min( p );
 			avgQuote.maxPrice = _.max( p );
+			
+			
+//console.log([avgQuote.minPrice, avgQuote.maxPrice]);			
+//console.log( exchangesIncluded );	
+//console.log( _.uniq( exchangesIncluded ) );	
+
+//console.log('\n\n');	
+			
 			avgQuote.vwapPrice = parseInt( (vwap / avgQuote.totalAmount ) * fixedExponent );
 			
-			if (avgQuote.exchangesIncluded.length > 1){
-				avgQuote.exchangesIncluded.sort();			
-				avgQuote.exchangesIncluded = _.uniq( avgQuote.exchangesIncluded, true );
-			}
+			//exchangesIncluded.sort();			
+			avgQuote.exchangesIncluded = _.uniq( exchangesIncluded );
 		}
 		
 		avgQuote.tx = currentBlockStore;
@@ -1039,6 +1286,8 @@ let server = createServer({
 
 	//Commit msg for each block.
 	commit: function(){
+		try {
+		
 		//events.emit('blockCommit', appState.blockHeight);
 		if (delayedTaskQueue.length > 0){
 			indexProtocol.processDelayedTask( appState.blockHeight ); //
@@ -1094,6 +1343,11 @@ let server = createServer({
 
 		// Buffer.from(appState.appHash, 'hex')
 		return { code: 0 }
+		
+		}catch(e){
+			console.log( e );
+			return { code: 0 }
+		}
 	} 
 
 });

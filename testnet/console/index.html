@@ -38,6 +38,19 @@
   <!-- Google Font -->
   <link rel="stylesheet"
         href="https://fonts.googleapis.com/css?family=Source+Sans+Pro:300,400,600,700,300italic,400italic,600italic">
+		
+		
+	<!-- Global site tag (gtag.js) - Google Analytics -->
+	<script async src="https://www.googletagmanager.com/gtag/js?id=UA-104198822-2"></script>
+	<script>
+	  window.dataLayer = window.dataLayer || [];
+	  function gtag(){dataLayer.push(arguments);}
+	  gtag('js', new Date());
+
+	  gtag('config', 'UA-104198822-2');
+	</script>
+
+		
 </head>
 <body class="hold-transition skin-blue sidebar-mini layout-boxed">
 <div class="wrapper">
@@ -152,16 +165,16 @@
         </div>
       </div>
       <!-- search form -->
-      <form action="#" method="get" class="sidebar-form">
+      <div class="sidebar-form">
         <div class="input-group">
-          <input type="text" name="q" class="form-control" placeholder="TX / Height / Account">
-          <span class="input-group-btn">
-                <button type="submit" name="search" id="search-btn" class="btn btn-flat">
+          <input type="text" name="chain-search-control" id="chain-search-control" class="form-control" placeholder="TX / Height / Account" autocomplete="off">
+			<span class="input-group-btn">
+                <button type="button" name="search" id="search-btn" class="btn btn-flat">
                   <i class="fa fa-search"></i>
                 </button>
-              </span>
+            </span>
         </div>
-      </form>
+      </div>
       <!-- /.search form -->
       <!-- sidebar menu: : style can be found in sidebar.less -->
       <ul class="sidebar-menu" data-widget="tree">
@@ -194,16 +207,48 @@
         </li>
 		
 		<li>
+			<a href="javascript:void indexProtocol.datasourcePage();">
+				<i class="fas fa-file-signature"></i> &nbsp;&nbsp;<span>Data Providers</span>
+			</a>
+		</li>
+		
+		<li>
           <a href="#">
             <i class="fa fa-users"></i>&nbsp;&nbsp;<span>Accounts</span>
+			
+			<span class="pull-right-container">
+              <span class="label label-default pull-right"><i>coming soon</i></span>
+          </span>
           </a>
+		  
+		  
         </li>
 		
 		<li>
           <a href="#">
             <i class="far fa-file-alt"></i>&nbsp;&nbsp;<span>Assets</span>
+			
+			<span class="pull-right-container">
+              <span class="label label-default pull-right"><i>coming soon</i></span>
+            </span>
           </a>
+		  
+		  
         </li>
+		
+		<li>
+          <a href="javascript:void indexProtocol.walletPage();">
+            <i class="fas fa-wallet"></i>&nbsp;&nbsp;<span>Wallet</span>
+			
+			<span class="pull-right-container">
+              <span class="label label-default pull-right"><i>coming soon</i></span>
+            </span>
+		  </a>
+		  
+			
+        </li>
+		
+		
 		
         
         <li class="treeview">
@@ -211,12 +256,12 @@
             <i class="fas fa-tools"></i>&nbsp;&nbsp;
             <span>Advanced</span>
             <span class="pull-right-container">
-              <i class=" pull-right"></i>
+              <span class="label label-default pull-right"><i>coming soon</i></span>
             </span>
           </a>
           <ul class="treeview-menu">    
             <li><a href="#"><i class="far fa-circle text-green"></i> Create TX</a></li>
-            <li><a href="#"><i class="far fa-circle text-yellow"></i> Data sources</a></li>
+            <!--<li><a href="#"><i class="far fa-circle text-yellow"></i> Data sources</a></li>-->
 			<li><a href="#"><i class="far fa-circle text-aqua"></i> RPC Endpoints</a></li>      
           </ul>
         </li>
@@ -253,6 +298,49 @@
     reserved.
   </footer>
 
+  
+  
+  <div class="modal fade" tabindex="-1" role="dialog" id="new-wallet-dialog">
+  <div class="modal-dialog" role="document" style="width:700px;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+        <h4 class="modal-title">Generate NEW Wallet</h4>
+      </div>
+      <div class="modal-body">
+        
+		<div class="box box-solid">
+            <div class="box-header with-border">
+              <i class="fa fa-text-width"></i>
+
+              <h3 class="box-title">Your private/public key and address</h3>
+            </div>
+            <!-- /.box-header -->
+            <div class="box-body">
+              <dl class="dl-horizontal">
+                <dt style="padding-bottom:10px;">Address</dt>
+					<dd id="new-wallet-address" class="new-wallet"></dd>
+                <dt style="padding-bottom:10px;">Private Key</dt>
+					<dd id="new-wallet-privkey" class="new-wallet"></dd>
+                <dt style="padding-bottom:10px;">Public Key</dt>
+					<dd id="new-wallet-pubkey" class="new-wallet" style="width:500px;overflow-wrap: normal;" wrap></dd>
+              </dl>
+			  <div style="text-align:center;"><b style="color:red;">SAVE YOUR PRIVATE KEY!</b> IF YOU LOST HIM - YOU LOST ALL ACCOUNT</div>
+            </div>
+            <!-- /.box-body -->
+          </div>
+		
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary">Save changes</button>
+      </div>
+    </div><!-- /.modal-content -->
+  </div><!-- /.modal-dialog -->
+</div><!-- /.modal -->
+  
+  
+  
 </div>
 <!-- ./wrapper -->
 
@@ -264,7 +352,24 @@
 <script src="dist/js/underscore-min.js"></script>
 <script src="dist/js/moment.js"></script>
 <script src="dist/js/async.min.js"></script>
-<!--<script src="dist/js/url.min.js"></script>--> 
+
+<!--
+<script src="dist/js/bn.js"></script>
+<script src="dist/js/secp256k1.js"></script>
+-->
+
+<script>
+	var _datasourceKeys = <?php 
+		$_data = json_decode( file_get_contents('datasource.keys.json'), true ); 
+		
+		foreach($_data['keys'] as $i => $x){
+			unset($_data['keys'][$i]['privKey']);  
+		}  
+		
+		echo json_encode( $_data['keys'] ); 
+	
+	?>;
+</script>
 
 
 <!-- FastClick -->
@@ -275,7 +380,7 @@
 <script src="bower_components/jquery-slimscroll/jquery.slimscroll.min.js"></script>
 
  
-<script src="dist/js/app.js"></script>
+<script src="dist/js/app.js?_=<?php echo microtime(true); ?>"></script>
 
 </body>
 </html>

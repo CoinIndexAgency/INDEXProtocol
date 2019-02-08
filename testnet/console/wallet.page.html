@@ -1,0 +1,249 @@
+<script>
+	if (indexProtocol._timer)
+		clearInterval( indexProtocol._timer );
+		
+	$('.content').hide();
+	
+	
+	
+	
+	
+	function updatePage(){
+		$.getJSON('https://rpc.testnet.indexprotocol.online/status', function(res){
+			let obj = res.result;
+			
+			var el = $('.content');
+				el.find('#latest-block-height').html( '<a href="javascript: void indexProtocol.blockPage('+obj.sync_info.latest_block_height+');">'+ obj.sync_info.latest_block_height + '</a>');
+			
+			var latestDt = moment( obj.sync_info.latest_block_time );	
+				el.find('#latest-block-datetime').html( latestDt.format('DD.MM.YYYY <br />HH:mm ss') );
+				
+			var latestHash = obj.sync_info.latest_block_hash.substring( 0, 7 ); 
+				el.find('#latest-block-hash').html( latestHash.toLowerCase() );
+			
+			let pv = obj.node_info.protocol_version;
+				el.find('#current-protocol').html( pv.app + '.' + pv.block + '.' + pv.p2p + '<br />v' + obj.node_info.version);
+			
+			//latest height
+			let _height = parseInt( obj.sync_info.latest_block_height );
+			
+			//if (indexProtocol.height == _height)
+			//	return;
+			
+			indexProtocol.height = _height;
+			
+			el.show();
+		});
+	}
+	
+	function newWalletGenerator(){
+		/**
+		//let xrand = _.random(0, Number.MAX_SAFE_INTEGER);
+		let xrand = window.Secp256k1.uint256( randomBytes( 32 ) ); //  randomBytes( 32 );
+		
+		//console.log( window.Secp256k1 );
+		//console.log( 'Rand: ' + xrand );
+		
+		let x = window.Secp256k1.generatePublicKeyFromPrivateKeyData( xrand );
+		
+		console.log( x );
+		**/
+		$.getJSON('https://rpc.testnet.indexprotocol.online/abci_query?path="getaccountaddress"', function(res){
+			if (!res || !res.result || !res.result.response || !res.result.response.value)
+				return;
+				
+			var obj = window.atob( res.result.response.value );
+			var tmp = '';
+				
+			if (!obj) return;  
+				
+			obj = JSON.parse( obj );
+				
+			if (!obj) return; 
+			
+			console.log( obj );
+			
+			$('.new-wallet').empty();
+			
+			$('#new-wallet-address').html( obj.address );
+			$('#new-wallet-privkey').html( obj.privKey );
+			$('#new-wallet-pubkey').html( obj.pubKey.match(/.{1,63}/g).join('<br />') );
+			
+
+			
+			$('#new-wallet-dialog').modal('show');
+		});		
+	}
+	
+	
+	
+	function updateValidatorsInfo(){
+		//fetch last blocks
+		$.getJSON('https://rpc.testnet.indexprotocol.online/genesis', function(res){
+			var el = $('.content');
+			var obj = res.result;
+			var tmp = '';
+						
+			let totVl = obj.genesis.validators.length;
+				el.find('#total-validators').html( totVl + ' validators' );
+			
+			_.each(obj.genesis.validators, function(v, i){
+				let t = v.name.substring(0, 2);
+				let nodeLocation = indexProtocol.nodeCodes[ t ];
+				
+				if (!nodeLocation) nodeLocation = '<i>unk</i>';
+				if (v.name == 'dev') nodeLocation = '<b>DEV</b>';
+				
+				let z = '<td><a href="http://rpc.'+v.name+'.testnet.indexprotocol.online/" target="_new">'+v.name+'</a></td><td>'+nodeLocation+'</td>' + 
+						'<td>'+v.address.toLowerCase()+'</td>' + 
+						'<td>'+v.pub_key.value+'</td>' + 
+						'<td>'+v.power+'</td>';  
+						
+				tmp = tmp + '<tr align="center">' + z + '</tr>';
+				
+						
+				
+								
+			});
+			
+			el.find('#validators-tbl').empty().html( tmp );
+		});
+	}
+
+	
+	
+	indexProtocol._timer = setInterval(function(){
+		updatePage();
+	}, 1000);
+</script>
+
+
+<!-- Content Header (Page header) -->
+<section class="content-header">
+  <h1>
+	INDEXProtocol Network <small>Testnet</small>
+  </h1>
+  <ol class="breadcrumb">
+	<!--
+	<li><a href="#"><i class="fa fa-dashboard"></i> Home</a></li>
+	<li class="active">Dashboard</li>
+	-->
+  </ol>
+</section>
+
+<!-- Main content -->
+<section class="content">
+  <!-- Info boxes -->
+  <div class="row">
+	<div class="col-md-3 col-sm-6 col-xs-12">
+	  <div class="info-box">
+		<span class="info-box-icon bg-aqua"><i class="fa fa-align-center"></i></span>
+
+		<div class="info-box-content">
+		  <span class="info-box-text">Block Height</span>
+		  <span class="info-box-number">
+			<font id="latest-block-height"></font>
+			<br />
+			<font id="total-validators"></font>
+		  </span>
+		</div>
+		<!-- /.info-box-content -->
+	  </div>
+	  <!-- /.info-box -->
+	</div>
+	<!-- /.col -->
+	<div class="col-md-3 col-sm-6 col-xs-12">
+	  <div class="info-box">
+		<span class="info-box-icon bg-red"><i class="fa fa-clock"></i></span>
+
+		<div class="info-box-content">
+		  <span class="info-box-text">Block DateTime</span>
+		  <span class="info-box-number" id="latest-block-datetime"></span>
+		</div>
+		<!-- /.info-box-content -->
+	  </div>
+	  <!-- /.info-box -->
+	</div>
+	<!-- /.col -->
+
+	<!-- fix for small devices only -->
+	<div class="clearfix visible-sm-block"></div>
+
+	<div class="col-md-3 col-sm-6 col-xs-12">
+	  <div class="info-box">
+		<span class="info-box-icon bg-green"><i class="fa fa-hashtag"></i></span>
+
+		<div class="info-box-content">
+		  <span class="info-box-text">Block hash</span>
+		  <span class="info-box-number" id="latest-block-hash"></span>
+		</div>
+		<!-- /.info-box-content -->
+	  </div>
+	  <!-- /.info-box -->
+	</div>
+	<!-- /.col -->
+	<div class="col-md-3 col-sm-6 col-xs-12">
+	  <div class="info-box">
+		<span class="info-box-icon bg-yellow"><i class="fa fa-server"></i></span>
+
+		<div class="info-box-content">
+		  <span class="info-box-text">Protocol</span>
+		  <span class="info-box-number" id="current-protocol"></span>
+		</div>
+		<!-- /.info-box-content -->
+	  </div>
+	  <!-- /.info-box -->
+	</div>
+	<!-- /.col -->
+  </div>
+  <!-- /.row -->
+
+  <div class="row">
+	<div class="col-md-12">
+		<!-- TABLE: LATEST ORDERS -->
+	  <div class="box box-info"> 
+		<div class="box-header with-border">
+		  <h3 class="box-title">Wallet Service</h3>
+		</div>
+		<!-- /.box-header -->
+		<div class="box-body" style="text-align:center;font-size:16px;">
+			<a href="javascript: void newWalletGenerator();" class="btn btn-default btn-sm" style="font-size:16px;">
+				<i class="fa fas fa-folder-plus"></i> Generate <b>NEW</b>
+			</a>
+			<a class="btn btn-default btn-sm" style="font-size:16px;">
+				<i class="fa fas fa-unlock-alt"></i> Unlock wallet
+			</a>
+			<a class="btn btn-default btn-sm" style="font-size:16px;">
+				<i class="fa fas fa-exchange-alt"></i> Transfer assets 
+			</a>
+			<a class="btn btn-default btn-sm" style="font-size:16px;">
+				<i class="fa far fa-envelope"></i> Sign&amp;Send message
+			</a>
+			<a class="btn btn-default btn-sm" style="font-size:16px;">
+				<i class="fa fas fa-share-alt"></i> Add alt name/id
+			</a>
+        </div>
+		<!-- /.box-body -->
+		<div class="box-footer clearfix">
+		  <!--<a href="javascript:void(0)" class="btn btn-sm btn-info btn-flat pull-left">Place New Order</a>
+		  <a href="javascript:void updateNetworkInfo();" class="btn btn-sm btn-default btn-flat pull-right">
+			<i class="fa fa-sync"></i> Update</a>-->
+		</div>
+		<!-- /.box-footer -->
+	  </div>
+	</div>
+	<!-- /.col -->
+  </div>
+  <!-- /.row -->
+
+</section>
+<!-- /.content -->
+
+
+
+
+
+<script>
+updatePage();
+//updateValidatorsInfo();
+</script>

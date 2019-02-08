@@ -46,8 +46,12 @@
 			var obj = res.result;
 			var tmp = '';
 			
-			el.find('#current-height').html( 'Block #<span style="font-weight:bold;">'+obj.block_meta.header.height+'</span> from '+obj.block_meta.header.time + ', hash: <i>'+obj.block_meta.block_id.hash.substring(0,32).toLowerCase()+'</i>');
+			if (!obj || !obj.block_meta) return;
+			
+			el.find('#current-height').html( 'Block #<span style="font-weight:bold;">'+obj.block_meta.header.height+'</span> from '+obj.block_meta.header.time + ' <br />Hash: <i>'+obj.block_meta.block_id.hash.toLowerCase()+'</i>');
 
+			el.find('.cur-block-id').html( height );
+			
 			var b = obj.block.header; 
 			let realHeight = parseInt( b.height );
 			
@@ -61,11 +65,23 @@
 				
 			el.find('#txs-at-block').empty().html( txs );
 			
+			//pre-commits
+			let pCom = 0, fCom = 0;
+				
+				fCom = obj.block.last_commit.precommits.length;
+				
+				_.each(obj.block.last_commit.precommits, function(a){
+					if (a)
+						pCom++;
+				});
+			
+			
 			let z = '<td>'+b.height+'</td>' + 
 						'<td title="Block hash: '+obj.block_meta.block_id.hash+'" style="cursor:pointer;width:250px;">'+obj.block_meta.block_id.hash.substring(0, 32).toLowerCase()+'</td>' + 
 						'<td style="">'+ t + '</td>' + 
 						'<td title="Proposal address: '+b.proposer_address+'" style="cursor:pointer;">'+b.proposer_address.toLowerCase()+'</td>' + 
-						'<td>'+txs+'</td>';
+						'<td>'+txs+'</td>' + 
+						'<td style="cursor:pointer;" title="Pervios block, precommits/total">'+pCom+'/'+fCom+'</td>';
 						
 			tmp = tmp + '<tr align="center">' + z + '</tr>';
 			
@@ -99,8 +115,11 @@
 			var ts = {
 				'CET' : '',
 				'REG' : '',
-				'TRA' : ''
+				'TRA' : '',
+				'IND' : ''
 			};
+			
+			var indices = []; //list of indices at this block
 			
 			_.each(decData, function(v){
 				//let tType = indexProtocol.txTypes[ v.type ]; 
@@ -110,16 +129,58 @@
 				
 				if (tCode == 'CET'){
 					//console.log( d );
+					if (d.excode == 'rightbtc'){
+						d.price = Math.trunc( d.price / 100000000 );
+						d.amount = Math.trunc( d.amount / 100000000 );
+						
+						d.total = Math.trunc( (d.price * d.amount)/1000000 );   
+					}
+					
+					let _sobj = _.find(indexProtocol.dataSources, function(v, i){
+						if (i.toLowerCase() === d.excode.toLowerCase())	return true;
+					});
+					
+					let source = d.excode;
+					
+					if (_sobj)	{
+						source = '<a href="'+_sobj.site+'" target="_blank">' + _sobj.name + '</a> ';
+						
+						if (_sobj.pubKey)
+							source = source + '<a href="#" style="text-decoration: none;color:green;" title="Verify public key for Data Provider"><i class="fas fa-shield-alt"></i></a>'; 
+					}
+					
 					
 					z = '<td><b>'+d.symbol+'</b></td>' + 
-						'<td>'+d.excode+'</td>' + 
+						'<td>'+source+'</td>' +  
 						'<td>'+d.side+'</td>' + 
 						'<td>'+Number( parseInt(d.price) / 1000000 ).toFixed(6)+'</td>' + 
 						'<td>'+Number( parseInt(d.amount) / 1000000 ).toFixed(6)+'</td>' + 
 						'<td>'+Number( parseInt(d.total) / 1000000 ).toFixed(6)+'</td>' + 
-						'<td style="">'+moment( d.ts*1000 ).format('DD.MM.YYYY HH:mm:ss')  +'</td>';
+						'<td style="">'+moment( d.ts*1000 ).format('DD.MM.YYYY HH:mm:ss')  +'</td>' + 
+						'<td><small class="label label-default" style="cursor:pointer;" title="Is this quote signed by exchange private key, nodes or unsigned (see: next testnet)"><i class="fas fa-signature"></i> <i>unsigned</i></small></td>';
 //console.log([ d.ts, (d.ts/1000), moment( d.ts*1000 ), moment( parseInt(d.ts/1000) )]);				
 					//Symbol, Exchange, Side, Price, Amount, Total, Time
+				}
+				else
+				if (tCode == 'IND'){
+					
+					let _sobj = _.find(indexProtocol.dataSources, function(v, i){
+						if (i.toLowerCase() === d.excode.toLowerCase())	return true;
+					});
+					
+					let source = d.excode;
+					
+					if (_sobj){
+						source = '<a href="'+_sobj.site+'" target="_blank">' + _sobj.name + '</a> ' + 
+							'<a href="#" style="text-decoration: none;color:green;" title="Verify public key for Data Provider"><i class="fas fa-shield-alt"></i></a>';
+					}
+					
+					z = '<td><b>'+d.symbol+'</b></td>' + 
+						'<td>'+Number( parseInt(d.price) / 1000000 ).toFixed(3)+'</td>' + 
+						'<td>'+source+'</td>' +  
+						'<td style="">'+moment( d.ts ).format('DD.MM.YYYY HH:mm:ss')  +'</td>' + 
+						'<td><span style="cursor:pointer;" title="This data SIGNED by private key from Data Provider. Validate it at any time (see: next testnet). Full signature: '+d.sign+'"><a href="#">'+d.sign.substr(0, 32)+'</a></span></td>' + 
+						'<td><small class="label label-success" style="cursor:pointer;" title="Validation of signature"><i class="fas fa-signature"></i>  <i title="Full signature: '+d.sign+'">verified</i></small></td>';
 				}
 				
 				ts[ tCode ] = ts[ tCode ] + '<tr style="text-align:center;">' + z + '</tr>';
@@ -127,7 +188,65 @@
 			
 			el.find('#txs-cet-tbl').empty().html( ts[ 'CET' ] );
 			
-			el.show();			
+			//update indices 
+			el.find('#ind-tbl').empty().html( ts[ 'IND' ] );
+			
+		
+			
+			el.show();	
+
+			//==============
+			$.getJSON('https://rpc.testnet.indexprotocol.online/abci_query?path="getavgtx"&data="'+height+'"', function(res){
+				if (!res || !res.result || !res.result.response || !res.result.response.value)
+					return;
+				
+				var obj = window.atob( res.result.response.value );
+				var tmp = '';
+				
+				if (!obj) return;  
+				
+				obj = JSON.parse( obj );
+				
+				if (!obj) return; 
+				
+				//console.log('avg tx for height: ' + height);
+				//console.log( obj );
+				
+				/*
+						<th style="text-align:center;">Symbol</th>
+						<th style="text-align:center;">Price</th>
+						<th style="text-align:center;">VWAP</th>
+						<th style="text-align:center;">Min/Max</th>
+						<th style="text-align:center;">Amn</th>
+						<th style="text-align:center;">Vol</th>
+					<th style="text-align:center;">Tx/Ex</th>
+				*/
+				
+				
+				let z = '';				
+					z = '<td><b>'+obj.symbol+'</b></td>' + 
+						'<td>'+Number( parseInt(obj.avgPrice) / 1000000 ).toFixed(3)+'</td>' + 
+						'<td>'+Number( parseInt(obj.vwapPrice) / 1000000 ).toFixed(3)+'</td>' + 
+						'<td>'+Number( parseInt(obj.minPrice) / 1000000 ).toFixed(3)+'/'+Number( parseInt(obj.maxPrice) / 1000000 ).toFixed(3)+'</td>' + 
+						'<td>'+Number( parseInt(obj.openPrice) / 1000000 ).toFixed(3)+'/'+Number( parseInt(obj.closePrice) / 1000000 ).toFixed(3)+'</td>' + 
+						'<td>'+Number( parseInt(obj.totalAmount) / 1000000 ).toFixed(3)+'</td>' + 
+						'<td>'+Number( parseInt(obj.totalVolume) / 1000000 ).toFixed(3)+'</td>' + 
+						'<td style="cursor:pointer;" title="Total txs and unique exchanges, used to calculate this rate">'+obj.totalTx+'/'+obj.exchangesIncluded.length+'</td>' + 
+						'<td><small class="label label-warning" style="cursor:pointer;" title="All used data may be verify by Merkle Proof (see: next testnet)"><i class="fas fa-file-signature"></i> <i>trusted</i></small></td>';
+						
+					
+						
+						
+						
+				el.find('#avg-cet-tbl').empty().html( '<tr style="text-align:center;">' + z + '</tr>' );
+				
+				el.find('#avg-cet-exchanges').empty().html( obj.exchangesIncluded.join(', ') );
+				
+			});
+
+
+
+			
 		});		
 	}
 
@@ -238,6 +357,7 @@
 				<th style="text-align:center;">Block Time</th>
 				<th style="text-align:center;">Proposer addr</th>
 				<th style="text-align:center;">Txs</th>
+				<th style="text-align:center;">PreCom</th>
 			  </tr>
 			  </thead>
 			  <tbody id="header-blocks-tbl">
@@ -258,47 +378,130 @@
   </div>
   <!-- /.row -->
   
-    <div class="row">
-	<div class="col-md-12">
-		<!-- TABLE: LATEST ORDERS -->
-	  <div class="box box-success"> 
-		<div class="box-header with-border">
-		  <h3 class="box-title">Crypto Exchange Decoded Transactions (txs: <span id="txs-at-block"></span> ) from this block</h3>
-		</div>
-		<!-- /.box-header -->
-		<div class="box-body">
-		  <div class="table-responsive">
-			<table class="table no-margin">
-			  <thead>
-			  <tr align="center" style="text-align:center;">
-			    <th style="text-align:center;">Symbol</th>
-				<th style="text-align:center;">Exchange</th>
-				<th style="text-align:center;">Side</th>
-				<th style="text-align:center;">Price</th>
-				<th style="text-align:center;">Amount</th>
-				<th style="text-align:center;">Total*</th>
-				<th style="text-align:center;">Time</th>
-			  </tr>
-			  </thead>
-			  <tbody id="txs-cet-tbl">
-				
-			  </tbody>
-			</table>
+  <div class="row">
+		<div class="col-md-12">
+		  <div class="box box-success"> 
+			<div class="box-header with-border">
+			  <h3 class="box-title" style="text-align:center;font-weight:bold;">
+				<center>Composite Trusted Rate at Block#<span class="cur-block-id"></span></center></h3>
+			</div>
+			<!-- /.box-header -->
+			<div class="box-body">
+			  <div class="table-responsive">
+				<table class="table no-margin">
+				  <thead>
+				  <tr align="center" style="text-align:center;">
+					<th style="text-align:center;">Symbol</th>
+					<th style="text-align:center;">Price, USD (avg)</th>
+					<th style="text-align:center;">VWAP</th>
+					<th style="text-align:center;">Min/Max</th>
+					<th style="text-align:center;">Open/Close</th>
+					<th style="text-align:center;">Amount, BTC</th>
+					<th style="text-align:center;">Volume, USD</th>
+					<th style="text-align:center;">Txs/Exs</th>
+					<th style="text-align:center;">Proof <i>(TBD)</i></th>
+					<!--<th style="text-align:center;">Proof</th>-->
+				  </tr>
+				  </thead>
+				  <tbody id="avg-cet-tbl">
+					
+				  </tbody>
+				</table>
+			  </div>
+			  <!-- /.table-responsive -->
+			</div>
+			<div class="box-footer clearfix">
+			  Calculation based on the previous 15 min (avg) blocks. Exchanges: <span style="font-style:italic;" id="avg-cet-exchanges"></span>
+			</div>
 		  </div>
-		  <!-- /.table-responsive -->
 		</div>
-		<!-- /.box-body -->
-		<div class="box-footer clearfix">
-		  <!--<a href="javascript:void(0)" class="btn btn-sm btn-info btn-flat pull-left">Place New Order</a>
-		  <a href="javascript:void updateNetworkInfo();" class="btn btn-sm btn-default btn-flat pull-right">
-			<i class="fa fa-sync"></i> Update</a>-->
-		</div>
-		<!-- /.box-footer -->
-	  </div>
-	</div>
 	<!-- /.col -->
-  </div>
+    </div>
   <!-- /.row -->
+  
+    <div class="row">
+		<div class="col-md-12">
+		  <div class="box box-success"> 
+			<div class="box-header with-border">
+			  <h3 class="box-title" style="text-align:center;font-weight:bold;">
+				<center>Indices and Trusted Rates at Block#<span class="cur-block-id"></span></center></h3>
+			</div>
+			<!-- /.box-header -->
+			<div class="box-body">
+			  <div class="table-responsive">
+				<table class="table no-margin">
+				  <thead>
+				  <tr align="center" style="text-align:center;">
+					<th style="text-align:center;">Symbol</th>
+					<th style="text-align:center;">Indices</th>
+					<th style="text-align:center;">Provider</th>
+					<th style="text-align:center;">Date/Time</th>
+					<th style="text-align:center;">Signature</th>
+					<th style="text-align:center;">Proof</th>
+				  </tr>
+				  </thead>
+				  <tbody id="ind-tbl">
+					
+				  </tbody>
+				</table>
+			  </div>
+			  <!-- /.table-responsive -->
+			</div>
+			<div class="box-footer clearfix">
+			  Used data from: <i>CoinMarketCap, CryptoCompare, CoinGecko, BitcoinAverage, CoinDesc, BitcoinCharts, Cryptonator, CME Group and Crypto Facilities. <br /><b>Coming soon</b>: WorldCoinIndex, Nomics, BraveNewCoin, Messari, LocalBitcoins, CoinApi, DataLight </i>
+			</div>
+		  </div>
+		</div>
+	<!-- /.col -->
+    </div>
+  <!-- /.row -->
+  
+  
+    <div class="row">
+		<div class="col-md-12">
+			<!-- TABLE: LATEST ORDERS -->
+		  <div class="box box-success"> 
+			<div class="box-header with-border">
+			  <h3 class="box-title">Crypto Exchange Decoded Transactions (txs: <span id="txs-at-block"></span> ) from this block</h3>
+			</div>
+			<!-- /.box-header -->
+			<div class="box-body">
+			  <div class="table-responsive">
+				<table class="table no-margin">
+				  <thead>
+				  <tr align="center" style="text-align:center;">
+					<th style="text-align:center;">Symbol</th>
+					<th style="text-align:center;">Exchange</th>
+					<th style="text-align:center;">Side</th>
+					<th style="text-align:center;">Price</th>
+					<th style="text-align:center;">Amount</th>
+					<th style="text-align:center;">Total</th>
+					<th style="text-align:center;">Time</th>
+					<th style="text-align:center;">Proof</th>
+				  </tr>
+				  </thead>
+				  <tbody id="txs-cet-tbl">
+					
+				  </tbody>
+				</table>
+			  </div>
+			  <!-- /.table-responsive -->
+			</div>
+			<!-- /.box-body -->
+			<div class="box-footer clearfix">
+			  <!--<a href="javascript:void(0)" class="btn btn-sm btn-info btn-flat pull-left">Place New Order</a>
+			  <a href="javascript:void updateNetworkInfo();" class="btn btn-sm btn-default btn-flat pull-right">
+				<i class="fa fa-sync"></i> Update</a>-->
+			</div>
+			<!-- /.box-footer -->
+		  </div>
+		</div>
+	<!-- /.col -->
+    </div>
+  <!-- /.row -->
+  
+  
+   
 
 </section>
 <!-- /.content -->
