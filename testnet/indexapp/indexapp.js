@@ -4,16 +4,17 @@ let createServer 	= require('js-abci');
 const crypto 		= require('crypto');
 //const { spawn } 	= require('child_process');
 const fs			= require('fs');
-let _				= require('underscore');
-var emitter			= require('events');
+const _				= require('underscore');
+const emitter		= require('events');
 const events 		= new emitter();
-var prettyHrtime 	= require('pretty-hrtime');
-var rocksdown 		= require('rocksdb');
-var async 			= require('async');
+const prettyHrtime 	= require('pretty-hrtime');
+const rocksdown 	= require('rocksdb');
+const async 		= require('async');
 const secp256k1		= require('secp256k1');
-let bs58			= require('bs58');
-let stringify 		= require('fast-json-stable-stringify');
-let moment			= require('moment');
+const bs58			= require('bs58');
+const stringify 	= require('fast-json-stable-stringify');
+const moment		= require('moment');
+const fetch			= require('node-fetch');
 
 const MerkleTree 	= require('merkletreejs');
 
@@ -123,6 +124,18 @@ let consensusConfirmation = {
 
 //test version of lib
 let indexProtocol = {
+	node:{
+		configDir: '/opt/tendermint/config', 
+		address: '', 
+		
+		//@todo: decode from config
+		pubKey: '',	//tendermint/PrivKeyEd25519
+		privKey: '',
+		
+		rpcHost: 'http://localhost:8080',
+		rpcHealth: false, //check if local rpc up
+	},
+	
 	curTime: new Date().getTime(), //global time, updated every new block (at begin block)
 	getDefaultState: function(){
 		return {
@@ -134,6 +147,7 @@ let indexProtocol = {
 			'blockHash'		: '',
 			'blockStore' 	: [],  //filled by transactions (by 900 block)
 			'blockTime'		: 0, //current block time
+			'blockProposer'	: '', //current block proposer address
 			
 			'previousAppHash' : '',
 			'latestAvg'		: null,	//latest avg data	
@@ -251,7 +265,29 @@ let indexProtocol = {
 						return;
 					}
 					
-				
+					//Sync load current node Validators address
+					//@todo: use config path
+					let privVal = fs.readFileSync(indexProtocol.node.configDir + '/priv_validator_key.json', {encoding:'utf8'});
+					
+					if (privVal){
+						privVal = JSON.parse(privVal);
+						
+						console.dir( privVal );
+						
+						if (privVal.address)
+							indexProtocol.node.address = privVal.address.toLowerCase();
+						
+						//need parse Tendermint format of key
+/*						
+indexProtocol = {
+	node:{
+		address: '', 
+		pubKey: '',	//tendermint/PrivKeyEd25519
+		privKey: ''		
+	},
+*/						
+						
+					}
 //TEST
 //appState.blockHeight = 99999;
 
@@ -347,6 +383,24 @@ let indexProtocol = {
 		server.listen(26658, function(){
 			console.log('ABCI server started OK');
 			
+			//run periodical check local RPC 
+			setInterval(function(){
+				fetch(indexProtocol.node.rpcHost + '/health')
+					.then(res => res.json())
+					.then(function(json){
+						if (json && json.result && !json.error){
+							if (indexProtocol.node.rpcHealth === false){
+								indexProtocol.node.rpcHealth = true;
+								
+								console.log('');
+								console.log('[INFO] local node RPC interface now online at: ' + indexProtocol.node.rpcHost);
+								console.log('');
+							}						
+						}
+							
+					}).catch(_.noop);
+			}, 1000);
+			
 			events.emit('AbciServerStarted');
 		}).on('error', function(e){
 			console.debug( e );
@@ -434,6 +488,11 @@ let indexProtocol = {
 				blocksIncluded		: [], //hash-map: height : blockHash  
 				exchangesIncluded	: [],
 				
+				//todo: include decoded all tx? or only Merkle root? 
+				
+				//commitedHeight		: 0, //if 0 - this is uncomitted, proposal
+				
+				//@use Tendermint's key from config
 				pubKey				: '', //public Key of calculater 
 				sign				: ''  // signature of calc block 
 			};
@@ -537,8 +596,7 @@ let indexProtocol = {
 				//calcAvg.merkleTree = tree.getLayersAsObject(); 
 			}
 			*/
-			/* @todo: realize sign avg quote */
-			calcAvg.avgHash = sha256( JSON.stringify( calcAvg ) ).toString('hex');
+			
 			
 //console.dir( calcAvg, {depth: 16, colors: true}); 
 //process.exit();
@@ -603,6 +661,38 @@ let indexProtocol = {
 		
 		return true;
 	},
+	
+	//check, if we proposer
+	isProposer: function( address, height ){
+		if (!address || !_.isString(address) || indexProtocol.node.address == '' || !indexProtocol.node.address) return false; 
+		
+		//
+		if ( address.toLowerCase() === indexProtocol.node.address ){
+			console.log( 'WE are Proposer of height: ' + height );
+			
+			return true;
+		}
+		
+		return false;		
+	},
+	
+	//Prepare TX with AVG calculated info, only if we are proposer
+	prepareCalculatedRateTx: function( data ){
+		if (!data) return false;
+		
+		let _code = 'avg'; //type of TX, prefix
+		//using deterministic stringify
+		let json  = stringify( data ); 
+		/* @todo: realize sign avg quote */
+		let _hash = sha256( json ).toString('hex');
+		
+		//todo: Add sign with private key of me (Validator)
+		//store at tx as separated part (code:signature:pubkey:txbody)			
+		let tx = _code + ':' + _hash + '::' + Buffer.from(json, 'utf8').toString('base64');
+		
+		return tx;		
+	},
+	
 	
 	
 	//new account registration
@@ -739,7 +829,7 @@ let server = createServer({
 		
 		console.log('Staring new chain with ID: ' + chainId);
 		console.log('Try to initialize clear evn for contracts and registry');
-		console.log(' ****** IMPORTANT!   CLEAN DB ************** ');		
+		console.log(' ************** IMPORTANT!   CLEAN DB ************** ');		
 		
 		//default value for appState
 		appState = indexProtocol.getDefaultState();		
@@ -972,10 +1062,12 @@ let server = createServer({
 		//return { code: 0 };
 
 		let tx = request.tx.toString('utf8'); //'base64'); //Buffer 
+		
+		//updated format: code:signature:pubkey:txbody		
 		let z  = tx.split(':'); //format: CODE:<base64 transaction body>
 
 		if (!tx) return { code: 0, log: 'Wrong tx type' };
-		if (!z || z.length != 2) return { code: 0, log: 'Wrong tx type' }; 	 
+		if (!z || z.length < 2) return { code: 0, log: 'Wrong tx type' }; 	 
 
 		let txType = z[0].toUpperCase();
 		let tags = {};
@@ -1069,9 +1161,11 @@ let server = createServer({
 			}
 			
 			case 'AVG': {
-				//console.log('AVG: Calc Rates :: ' + z[1]);
+				console.log('AVG: Calc Rates');
 				
+				console.dir( z, {depth:8});
 				
+				/**
 				let _x = Buffer.from( z[1], 'base64').toString('utf8');
 				
 				var x = JSON.parse( _x );
@@ -1081,7 +1175,7 @@ let server = createServer({
 					console.log('AVG: Calc Rates commited for height ' + x.blockHeight + ' (diff: ' + (appState.blockHeight - x.blockHeight) + ')');
 				
 				}
-				
+				*/
 				break;
 			}
 			
@@ -1224,43 +1318,49 @@ let server = createServer({
   
 	beginBlock: function(request) {
 		console.log('Call: BeginBlock. Height: ' + request.header.height);  
-		//console.log( request );
+		
+		beginBlockTs = process.hrtime();
+		indexProtocol.curTime = new Date().getTime(); //local node's time
+		//initial current block store
+		currentBlockStore = [];
+		
+		
+console.dir( request, {depth:64, colors: true} );
 		
 		//block time
 		appState.blockTime = parseInt( request.header.time.seconds ); 
 		
 		//console.log( request.header.height + ' block proposerAddress: ' + request.header.proposerAddress.toString('hex') ); 
 		appState.blockHash = request.hash.toString('hex');
+		appState.blockProposer = request.header.proposerAddress.toString('hex');
+		appState.blockHeight = parseInt( request.header.height.toString() );
 		
-		let proposerAddress = request.header.proposerAddress.toString('hex');
 		let numTx = parseInt( request.header.numTxs.toString() );
 		let rewardFull = appState.options.rewardPerBlock + ( appState.options.rewardPerDataTx * numTx);
 			
 			//save to special system tbl 
 			delayedTaskQueue.push({
 				exec: 'tbl.system.rewards', 
-				address: proposerAddress, 
+				address: appState.blockProposer, 
 				rewardPerBlock: appState.options.rewardPerBlock,
 				rewardPerDataTx: appState.options.rewardPerDataTx,
 				numTx: numTx,
 				
 				rewardFull: rewardFull,
 				
-				blockHeight: parseInt( request.header.height.toString() )
+				blockHeight: appState.blockHeight
 			});
 	
-		//initial current block store
-		currentBlockStore = [];
-
-		beginBlockTs = process.hrtime();
-		
-		indexProtocol.curTime = new Date().getTime(); //local node's time
-		
 		return { code: 0 };
 	},
   
 	endBlock: function(request){
 		let hx = parseInt( request.height.toString() );
+		
+		if (hx != appState.blockHeight){
+			console.log('PANIC! endBlock.height !== beginBlock.height and !== appSate.height');
+			process.exit(1);
+		}
 		
 		
 //console.dir( request, {depth:16, colors: true});		
@@ -1272,9 +1372,9 @@ let server = createServer({
 		
 		//lets calc some avg stat of block 
 		let avgQuote = {
-			blockHeight: hx, 
-			blockHash: appState.blockHash,
-			blockTime: appState.blockTime,
+			blockHeight	: appState.blockHeight, 
+			blockHash	: appState.blockHash,
+			blockTime	: appState.blockTime,
 			
 			avgPrice: 0,
 			minPrice: 0,
@@ -1304,7 +1404,7 @@ let server = createServer({
 				y = y + v.amount;
 				z = z + v.total;
 				
-				vwap = vwap + (v.total); // / fixedExponent);
+				vwap = vwap + (v.total);
 				
 				p.push( parseInt( v.price ) );
 				
@@ -1312,12 +1412,11 @@ let server = createServer({
 					exchangesIncluded.push( v.excode );
 			});
 			
-			if (x > 0) avgQuote.avgPrice = parseInt( x / currentBlockStore.length );
-			if (y > 0) avgQuote.totalAmount = parseFloat( y );
-			if (z > 0) avgQuote.totalVolume = parseFloat( z );
+			//@todo: USE INTEGERS and Math.trunc
 			
-//console.log('\n\n');
-//console.log(p);
+			if (x > 0) avgQuote.avgPrice 	= parseInt( x / currentBlockStore.length );
+			if (y > 0) avgQuote.totalAmount = parseInt( y );
+			if (z > 0) avgQuote.totalVolume = parseInt( z );
 			
 			avgQuote.minPrice = _.min( p );
 			avgQuote.maxPrice = _.max( p );
@@ -1338,7 +1437,7 @@ let server = createServer({
 		avgQuote.tx = currentBlockStore;
 		
 		appState.blockStore.unshift( avgQuote );
-		appState.blockHeight = hx;
+		
 		appState.previousAppHash = appState.appHash;
 		appState.appHash = '';
 
@@ -1359,7 +1458,7 @@ let server = createServer({
 		}
 				
 		indexProtocol.blockCommitHandler( appState.blockHeight );
-
+		
 		endBlockTs = process.hrtime( beginBlockTs ); 
 
 		if (appState.appHash == ''){
@@ -1400,10 +1499,36 @@ let server = createServer({
 						saveOps = []; //reset all planned writes to main db
 						
 						const diff2 = process.hrtime(time2);
-				
-						console.log( appState.blockHeight + ' block, data tx: ' + appState.blockStore[0].tx.length + ', appState hash: ' + appState.appHash + ', save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', block: '+ prettyHrtime(endBlockTs)+')');
 						
-						return resolve( {code: 0} );
+						//if I Proposer - lets send Tx 
+						if (indexProtocol.isProposer(appState.blockProposer, appState.blockHeight) == true && indexProtocol.node.rpcHealth === true){
+							
+							const t1 = process.hrtime();
+							const tx = indexProtocol.prepareCalculatedRateTx( appState.latestAvg );
+							
+							if (tx){
+								fetch('//' + indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime()).then(function(){
+									
+									const tdiff = process.hrtime(t1);
+									
+									console.log( appState.blockHeight + ' block, data tx: ' + appState.blockStore[0].tx.length + ', appState hash: ' + appState.appHash + ', save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', tx_async: '+prettyHrtime(tdiff)+', block: '+ prettyHrtime(endBlockTs)+')');
+						
+									return resolve( {code: 0} );										
+									
+								}).catch(function(err){ console.error(err);  return reject( {code:1} ); });
+							}
+							else {
+								console.log('ERROR while building tx');
+								process.exit(1);	
+							}
+							
+						}
+						else {					
+						
+							console.log( appState.blockHeight + ' block, data tx: ' + appState.blockStore[0].tx.length + ', appState hash: ' + appState.appHash + ', save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', block: '+ prettyHrtime(endBlockTs)+')');
+							
+							return resolve( {code: 0} );
+						}
 					}
 					else {
 						console.log('ERROR while save state to DB');
