@@ -15,6 +15,7 @@ const bs58			= require('bs58');
 const stringify 	= require('fast-json-stable-stringify');
 const moment		= require('moment');
 const fetch			= require('node-fetch');
+const http			= require('http');
 
 const MerkleTree 	= require('merkletreejs');
 
@@ -51,8 +52,14 @@ process.on('exit', (code) => {
 //test private key for system account
 const godKey = '178194397bd5290a6322c96ea2ff61b65af792397fa9d02ff21dedf13ee9bb33';
 const storeLatestBlocks = 300; //how many blocks decoded and stored
+const storeLatestAvgBlocks = 20; //how many blocks stored for check AVG tx.
 const fixedExponent = 1000000;
 let manualRevertOneBlock = false;
+
+var rpcHttpAgent = new http.Agent({
+	keepAlive: true,
+	timeout: 15000
+});
 
 const stateDbPath 	= '/opt/tendermint/app/db/state.db'; //stateDb
 
@@ -123,7 +130,7 @@ let consensusConfirmation = {
 } **/
 
 //test version of lib
-let indexProtocol = {
+let indexProtocol = {   
 	node:{
 		configDir: '/opt/tendermint/config', 
 		address: '', 
@@ -132,10 +139,15 @@ let indexProtocol = {
 		pubKey: '',	//tendermint/PrivKeyEd25519
 		privKey: '',
 		
-		rpcHost: 'http://localhost:8080',
+		rpcHost: 'http://localhost:8080', //'http://127.0.0.1:26657', // 'http://localhost:8080',
 		rpcHealth: false, //check if local rpc up
 	},
 	
+	//@todo: maybe store it at rocksDb? 
+	//local storage of latest uncomitted avg quotes
+	//store latest N 
+	latestAvgStore:[],  //{height: height, hash: hash,  symbol: calcAvg.symbol, data: calcAvg}
+		
 	curTime: new Date().getTime(), //global time, updated every new block (at begin block)
 	getDefaultState: function(){
 		return {
@@ -150,8 +162,7 @@ let indexProtocol = {
 			'blockProposer'	: '', //current block proposer address
 			
 			'previousAppHash' : '',
-			'latestAvg'		: null,	//latest avg data	
-			
+						
 			//some of settings overall all chain
 			'options'		: {
 				//'blockBeforeConfirmation' 	: 10, //how blocks we need to wait before
@@ -162,7 +173,10 @@ let indexProtocol = {
 				
 				//full reward = rewardPerBlock + (rewardPerDataTx * DataTxCount) + SUMM(TxFee)
 				'rewardPerBlock'				: 1000, //reward to Validator for block (base value, for any tx at block)
-				'rewardPerDataTx'				: 10
+				'rewardPerDataTx'				: 10,
+				
+				//add all app options to appState
+				//'app'							: {}
 			},
 			
 			dataSource: {},
@@ -213,6 +227,8 @@ let indexProtocol = {
 			} //user accounts
 		};
 	},
+	//'latestAvg'		: null,	//latest avg data	
+	lastAvg		: null,	//latest avg data	
 	
 	eventsSubscribe: function(){
 		//events.on('blockCommit', indexProtocol.blockCommitHandler);
@@ -226,6 +242,24 @@ let indexProtocol = {
 	
 	//some handlers
 	loadState: function(){
+		
+		//Sync load current node Validators address
+		//@todo: use config path
+		let privVal = fs.readFileSync(indexProtocol.node.configDir + '/priv_validator_key.json', {encoding:'utf8'});
+				
+		if (privVal){
+			privVal = JSON.parse(privVal);
+			
+			if (privVal.address)
+				indexProtocol.node.address = privVal.address.toLowerCase();
+			
+			console.log('My validator\'s address: ' + indexProtocol.node.address);
+		}
+		else {
+			console.log('ERROR: Can\'t load file priv_validator_key.json from ' + indexProtocol.node.configDir);
+			process.exit(1);
+		}
+		
 		console.log('Reading latest app state from db: ' + stateDbPath + '\n');
 	
 		if (stateDb.status == 'open'){
@@ -264,34 +298,9 @@ let indexProtocol = {
 						
 						return;
 					}
-					
-					//Sync load current node Validators address
-					//@todo: use config path
-					let privVal = fs.readFileSync(indexProtocol.node.configDir + '/priv_validator_key.json', {encoding:'utf8'});
-					
-					if (privVal){
-						privVal = JSON.parse(privVal);
 						
-						console.dir( privVal );
-						
-						if (privVal.address)
-							indexProtocol.node.address = privVal.address.toLowerCase();
-						
-						//need parse Tendermint format of key
-/*						
-indexProtocol = {
-	node:{
-		address: '', 
-		pubKey: '',	//tendermint/PrivKeyEd25519
-		privKey: ''		
-	},
-*/						
-						
-					}
 //TEST
 //appState.blockHeight = 99999;
-
-
 					
 					//check it 
 					let calcAppHash = indexProtocol.calcHash( JSON.stringify(appState), false);
@@ -311,17 +320,16 @@ indexProtocol = {
 								
 								console.log('State loaded OK\n');
 								events.emit('appStateRestored');
-								
 								/**
-								//confirmations 
-								stateDb.get('tbl.confirmation', function(err, val){
+								stateDb.get('tbl.system.lastavg', function(err, val){
 									if (!err && val && Buffer.isBuffer(val)){
 										val = JSON.parse( val.toString('utf8') );
 										
-										if (val && val.state && val.queue){
-											consensusConfirmation = val;
+										if (val){
 											
-											console.log('Confirmations loaded OK');
+											indexProtocol.lastAvg = val;
+											
+											console.log('Latest stored calcs AVG loaded OK');
 											
 											events.emit('appStateRestored');
 										}
@@ -385,7 +393,7 @@ indexProtocol = {
 			
 			//run periodical check local RPC 
 			setInterval(function(){
-				fetch(indexProtocol.node.rpcHost + '/health')
+				fetch(indexProtocol.node.rpcHost + '/health', {agent: rpcHttpAgent})
 					.then(res => res.json())
 					.then(function(json){
 						if (json && json.result && !json.error){
@@ -462,8 +470,7 @@ indexProtocol = {
 				blockHeight			: height, 
 				blockHash			: appState.blockHash,
 				
-				avgHash				: '', //sha256				
-				merkleRoot			: '',
+				txMerkleRoot		: '', //Merkle root from tx, included in
 								
 				avgPrice			: 0,
 				minPrice			: 0,
@@ -489,8 +496,6 @@ indexProtocol = {
 				exchangesIncluded	: [],
 				
 				//todo: include decoded all tx? or only Merkle root? 
-				
-				//commitedHeight		: 0, //if 0 - this is uncomitted, proposal
 				
 				//@use Tendermint's key from config
 				pubKey				: '', //public Key of calculater 
@@ -533,10 +538,10 @@ indexProtocol = {
 				if (tmp){
 					
 					//@todo: which price use? avg/mid/vwap, first of tx at block?
-					calcAvg.openPrice = tmp.vwapPrice;
-					calcAvg.openAmount = tmp.totalAmount;
-					calcAvg.openVolume = tmp.totalVolume;
-					calcAvg.openTime   = tmp.blockTime;
+					calcAvg.openPrice 	= tmp.vwapPrice;
+					calcAvg.openAmount 	= tmp.totalAmount;
+					calcAvg.openVolume 	= tmp.totalVolume;
+					calcAvg.openTime   	= tmp.blockTime;
 				}	
 				
 				//closePrice - avg from head of store 
@@ -579,29 +584,46 @@ indexProtocol = {
 				}
 			}
 			
-			/*
-			let _tmp = [];
+			let _blockHashes = [];
+			let _blockIds = [];
 			
 			calcAvg.blocksIncluded.forEach(function(v){
-				if (v.hash) _tmp.push( v.hash );
+				if (v.hash) {
+					_blockHashes.push( v.hash );
+					_blockIds.push( v.height );
+				}
 			});
 			
-			if (_tmp && _tmp.length > 0){
+			_blockIds.sort();
+			//optimize for smallest tx size
+			calcAvg.blocksIncluded = _blockIds;
 			
-				//const tree = new MerkleTree(_tmp, sha256, {isBitcoinTree: true});
-				//calcAvg.merkleRoot = tree.getRoot().toString('hex');
+			if (_blockHashes && _blockHashes.length > 0){
+			
+				const tree = new MerkleTree(_blockHashes, sha256, {isBitcoinTree: true});
+				calcAvg.txMerkleRoot = tree.getRoot().toString('hex');
 				
 				//store all Merkle Tree
 				//@todo: add creation from stored
 				//calcAvg.merkleTree = tree.getLayersAsObject(); 
 			}
-			*/
 			
-			
+			//hash this 
+			let hash = sha256( JSON.stringify(calcAvg) );
+						
 //console.dir( calcAvg, {depth: 16, colors: true}); 
 //process.exit();
 
-			appState.latestAvg = calcAvg;
+			//check history 
+			if (indexProtocol.latestAvgStore.length > storeLatestAvgBlocks){
+				//delete first 
+				indexProtocol.latestAvgStore.shift();
+			}
+			
+			//store 
+			indexProtocol.latestAvgStore.push({height: height, hash: hash,  symbol: calcAvg.symbol, data: calcAvg});
+			
+			indexProtocol.lastAvg = calcAvg;
 		}
 	},
 	
@@ -668,7 +690,7 @@ indexProtocol = {
 		
 		//
 		if ( address.toLowerCase() === indexProtocol.node.address ){
-			console.log( 'WE are Proposer of height: ' + height );
+			console.log( '\nWE are Proposer of height: ' + height + '\n' );
 			
 			return true;
 		}
@@ -679,21 +701,20 @@ indexProtocol = {
 	//Prepare TX with AVG calculated info, only if we are proposer
 	prepareCalculatedRateTx: function( data ){
 		if (!data) return false;
-		
+//console.dir( data );		
 		let _code = 'avg'; //type of TX, prefix
 		//using deterministic stringify
 		let json  = stringify( data ); 
+		//use gzip?
 		/* @todo: realize sign avg quote */
 		let _hash = sha256( json ).toString('hex');
 		
 		//todo: Add sign with private key of me (Validator)
-		//store at tx as separated part (code:signature:pubkey:txbody)			
-		let tx = _code + ':' + _hash + '::' + Buffer.from(json, 'utf8').toString('base64');
-		
+		//store at tx as separated part (code:hash:signature:pubkey:flags:txbody)			
+		let tx = _code + ':' + _hash + '::::' + Buffer.from(json, 'utf8').toString('base64');
+//console.dir( tx );		
 		return tx;		
 	},
-	
-	
 	
 	//new account registration
 	processNewAccountReg: function(data, height){
@@ -800,11 +821,6 @@ console.debug( accObj );
 				return true;				
 			}			
 		}		
-	},
-	
-	//API handlers for abci_query 
-	api: {
-		
 	}
 }
 
@@ -1047,7 +1063,117 @@ let server = createServer({
   
 	checkTx: function(request) {
 		//console.log('Call: CheckTx', request);   
-		// let tx = request.tx;
+		
+		let tx = request.tx.toString('utf8');
+		
+		if (!tx) return { code: 1, log: 'Wrong tx type' };
+		
+		//updated format: code:signature:pubkey:txbody	
+		//@todo: rewrite structure as: code:hash:sign:pubkey:flags:data	 - flags how decode data	
+		let z  = tx.split(':'); //format: CODE:<base64 transaction body>
+
+		if (!z || z.length < 2) return { code: 1, log: 'Wrong tx type' };
+		
+		let txType = z[0].toUpperCase();
+		
+		switch ( txType ){
+			case 'CET': {	//old type of tx 
+				let _x = Buffer.from( z[1], 'base64').toString('utf8');
+				let x = JSON.parse( _x );
+				
+				if (x){
+					//debug 
+					if (x.excode && x.excode != 'rightbtc'){
+						if (x.price < 0)
+							return { code: 1, log: txType + ': Price can not be lover then 0'};
+						
+						if (x.amount <= 0)
+							return { code: 1, log: txType + ': Amount can not be 0 or less'};
+						
+						if (x.total <= 0)
+							return { code: 1, log: txType + ': Total can not be 0 or less'};
+						
+						if (!x.id || x.id == null || x.id == '')
+							return { code: 1, log: txType + ': tradeID can not be empty'};  
+					}
+				}
+				else
+					return { code: 1, log: txType + ': Wrong data after parsing'};  
+				
+				break;
+			}
+			case 'AVG': {
+				console.log('AVG: CheckTx Rates');
+				
+				console.dir( z, {depth:8});
+				
+				console.log( z[(z.length-1)] );
+				
+				//@todo: rewrite structure as: hash:sign:pubkey:flags:data
+				//check signature 
+				if (!z[1])	return { code: 1, log: txType + ': wrong or empty hash'};  
+				
+				let hash = z[1];
+let ass = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+console.dir( ass, {depth:8});				
+				let data = JSON.parse( ass );
+console.dir( data, {depth:8});
+				
+				if (!data)	return { code: 1, log: txType + ': wrong data after parsing'};  
+				
+				//fetch local copy of avg by height
+				let localCopy = _.find(indexProtocol.latestAvgStore, function(v){
+					if (v.height == data.height && v.symbol == data.symbol)
+						return true;
+				});
+/*				
+				console.log('Data from proposer');
+				console.dir( data, {depth:8});
+				console.log(' ');
+				console.log('Data from local copy');
+				console.dir( localCopy.data, {depth:8});
+				console.log(' ');
+*/				
+				
+				if (!localCopy){	//we havent local data 
+					//@todo: if nothing data - what to do?
+					return { code: 0 };
+				}
+				else {
+					//simple check - hash only (?)
+					if (hash == localCopy.hash){
+						//Quote are identical by hash 
+						return { code: 0 };
+					}
+					else {
+						
+						console.log('Data from proposer');
+						console.dir( data, {depth:8});
+						console.log(' ');
+						console.log('Data from local copy');
+						console.dir( localCopy.data, {depth:8});
+						console.log(' ');
+						
+						//@todo: use deep Fuzzy check, every field and scoring system to check eq						
+						//check MerkleRoot 
+						if (data.txMerkleRoot == localCopy.data.txMerkleRoot){
+							return { code: 0 };
+						}
+					}				
+				}
+				
+				//check eq with local Tx 
+				//latestAvgStore:[],  //{height: height, hash: hash,  symbol: calcAvg.symbol, data: calcAvg}
+								
+				break;
+			}
+			
+			default: {	
+				break;
+			}			
+		}
+		
+				
 		let ztag = [];
 			ztag.push({key: 'year', value : '2019'}); 
 			ztag.push({key: 'zear', value : 'test'}); 
@@ -1086,6 +1212,7 @@ let server = createServer({
 				
 				var x = JSON.parse( _x );
 				
+				//@todo: remove from this, do this check at checkTx
 				if (x){			
 					if (x.price < 0)
 						return { code: 0, log: 'CET: Price can not be lover then 0'};
@@ -1161,14 +1288,12 @@ let server = createServer({
 			}
 			
 			case 'AVG': {
-				console.log('AVG: Calc Rates');
+				console.log('AVG: DeliverTx with average calc Rates');
 				
 				console.dir( z, {depth:8});
 				
-				/**
-				let _x = Buffer.from( z[1], 'base64').toString('utf8');
-				
-				var x = JSON.parse( _x );
+				/*
+				let x = JSON.parse( Buffer.from( z[3], 'base64').toString('utf8') );
 				
 				if (x){
 				
@@ -1317,7 +1442,7 @@ let server = createServer({
 	},
   
 	beginBlock: function(request) {
-		console.log('Call: BeginBlock. Height: ' + request.header.height);  
+		
 		
 		beginBlockTs = process.hrtime();
 		indexProtocol.curTime = new Date().getTime(); //local node's time
@@ -1325,15 +1450,17 @@ let server = createServer({
 		currentBlockStore = [];
 		
 		
-console.dir( request, {depth:64, colors: true} );
+//console.dir( request, {depth:64, colors: true} );
 		
 		//block time
 		appState.blockTime = parseInt( request.header.time.seconds ); 
 		
 		//console.log( request.header.height + ' block proposerAddress: ' + request.header.proposerAddress.toString('hex') ); 
 		appState.blockHash = request.hash.toString('hex');
-		appState.blockProposer = request.header.proposerAddress.toString('hex');
+		appState.blockProposer = request.header.proposerAddress.toString('hex').toLowerCase();
 		appState.blockHeight = parseInt( request.header.height.toString() );
+		
+		console.log('Call: BeginBlock. Height: ' + request.header.height + ', proposer: ' + appState.blockProposer + ', me: ' + (appState.blockProposer == indexProtocol.node.address));  
 		
 		let numTx = parseInt( request.header.numTxs.toString() );
 		let rewardFull = appState.options.rewardPerBlock + ( appState.options.rewardPerDataTx * numTx);
@@ -1478,12 +1605,14 @@ console.dir( request, {depth:64, colors: true} );
 				{ type: 'put', key: 'blockHeight', value: appState.blockHeight },
 				
 				{ type: 'put', key: 'appState', value: jsonAppState },
+				{ type: 'put', key: 'tbl.system.lastavg', value: JSON.stringify( indexProtocol.lastAvg ) }
 				/** @todo: more db size 
 				//save state history to fast revert 
 				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.appstate', value: appState.appHash + '::' + jsonAppState },
 				**/
-				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: JSON.stringify(appState.latestAvg) },
-				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: JSON.stringify(appState.blockStore[0])}
+				//store only comitted
+				//{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: JSON.stringify(indexProtocol.lastAvg) },
+				//TEST{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: JSON.stringify(appState.blockStore[0])}
 			];
 			
 			if (saveOps.length > 0){
@@ -1499,16 +1628,36 @@ console.dir( request, {depth:64, colors: true} );
 						saveOps = []; //reset all planned writes to main db
 						
 						const diff2 = process.hrtime(time2);
-						
+//console.log('RPC Health: ' + indexProtocol.node.rpcHealth);						
 						//if I Proposer - lets send Tx 
 						if (indexProtocol.isProposer(appState.blockProposer, appState.blockHeight) == true && indexProtocol.node.rpcHealth === true){
 							
 							const t1 = process.hrtime();
-							const tx = indexProtocol.prepareCalculatedRateTx( appState.latestAvg );
-							
+							const tx = indexProtocol.prepareCalculatedRateTx( indexProtocol.lastAvg );
+//console.log( indexProtocol.lastAvg );
+//console.log( tx );							
 							if (tx){
-								fetch('//' + indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime()).then(function(){
+								
+								http.get(indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime(), {agent:rpcHttpAgent}, function(resp){
+									const tdiff = process.hrtime(t1);
 									
+									console.log('http responce code: ' + resp.statusCode + ' with time: ' + tdiff);
+									//console.dir( resp, {depth: 16} );
+									
+									
+								}).on('error', (e) => {
+								  console.error(`Got error: ${e.message}`);
+								});
+								
+								console.log( appState.blockHeight + ' block, data tx: ' + appState.blockStore[0].tx.length + ', appState hash: ' + appState.appHash + ', save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+/*', tx_async: '+prettyHrtime(tdiff)+*/', block: '+ prettyHrtime(endBlockTs)+')');
+						
+								return resolve( {code: 0} );
+								
+								
+								/**
+								
+								fetch(indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime()).then(function(rq){
+	console.log( rq );								
 									const tdiff = process.hrtime(t1);
 									
 									console.log( appState.blockHeight + ' block, data tx: ' + appState.blockStore[0].tx.length + ', appState hash: ' + appState.appHash + ', save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', tx_async: '+prettyHrtime(tdiff)+', block: '+ prettyHrtime(endBlockTs)+')');
@@ -1516,6 +1665,8 @@ console.dir( request, {depth:64, colors: true} );
 									return resolve( {code: 0} );										
 									
 								}).catch(function(err){ console.error(err);  return reject( {code:1} ); });
+								
+								**/
 							}
 							else {
 								console.log('ERROR while building tx');
