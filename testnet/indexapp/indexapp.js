@@ -24,6 +24,7 @@ function sha256(data) {
   return crypto.createHash('sha256').update(data, 'utf8').digest();
 }
 
+// returns Buffer
 function sha512(data) {
   return crypto.createHash('sha512').update(data, 'utf8').digest();
 }
@@ -48,6 +49,11 @@ process.on('exit', (code) => {
 		console.log('\n');
 	}
 });
+
+//local config and state, NOT replicated or store to chain, but store locally
+const nodeState = {
+	latestCommitedCalcBlock	:	0, //latest block avg with commit
+};
 
 //test private key for system account
 const godKey = '178194397bd5290a6322c96ea2ff61b65af792397fa9d02ff21dedf13ee9bb33';
@@ -471,6 +477,7 @@ let indexProtocol = {
 				
 				blockHeight			: height, 
 				blockHash			: appState.blockHash,
+				blockCommit			: 0, //change to block, commited. for verify = set to 0
 				
 				txMerkleRoot		: '', //Merkle root from tx, included in
 								
@@ -1119,7 +1126,7 @@ let server = createServer({
 				let data = JSON.parse( Buffer.from( z[(z.length-1)], 'base64').toString('utf8') );
 //console.dir( data, {depth:8});
 					
-				if (!data)	return { code: 1, log: txType + ': wrong data after parsing'};  
+				if (!data)	return { code: 1, log: txType + ': wrong data after parsing'};     
 /**
 console.log('');
 console.log('');
@@ -1228,19 +1235,6 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 				
 				//@todo: remove from this, do this check at checkTx
 				if (x){			
-					if (x.price < 0)
-						return { code: 0, log: 'CET: Price can not be lover then 0'};
-					
-					if (x.amount <= 0)
-						return { code: 0, log: 'CET: Amount can not be 0 or less'};
-					
-					if (x.total <= 0)
-						return { code: 0, log: 'CET: Total can not be 0 or less'};
-					
-					if (!x.id || x.id == null || x.id == '')
-						return { code: 0, log: 'CET: ID can not be empty'};    
-					
-					
 					if (x.excode && x.excode == 'rightbtc'){
 						tags[ 'tx.excode' ] = x.excode.toLowerCase();
 						
@@ -1262,7 +1256,7 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 					}
 					//	return { code: 1, log: 'CET: RightBTC Exchange is blocked!' };
 					
-/**					
+					
 					tags[ 'asset' ] = x.asset.toUpperCase();
 					tags[ 'cur' ] = x.cur.toUpperCase();
 					tags[ 'tx.symbol' ] = x.symbol.toUpperCase();
@@ -1284,7 +1278,7 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 					
 					tags[ 'tx.hour' ] = _ts.format('HH');
 					tags[ 'tx.time' ] = _ts.format('HH:mm');
-**/
+
 					delete x._hash;
 
 					currentBlockStore.push( x );
@@ -1299,8 +1293,7 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 				return { code: 0, tags: ztag }; 
 				
 				break;   
-			}
-			
+			}			
 			case 'AVG': {
 				console.log('AVG: DeliverTx with average calc Rates');
 				
@@ -1310,6 +1303,8 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 				if (data){
 					//all check prepared at checkTx (as i known)
 					//save this as commited data 
+					data.blockCommit = appState.blockHeight; 					
+					
 					saveOps.push({ type: 'put', key: 'tbl.block.'+data.blockHeight+'.avg', value: JSON.stringify(data) });
 					
 					console.log('AVG: Calc Rates commited for height ' + data.blockHeight + ' (diff: ' + (appState.blockHeight - data.blockHeight) + ')');
