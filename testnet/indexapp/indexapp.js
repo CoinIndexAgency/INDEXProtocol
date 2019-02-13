@@ -52,7 +52,9 @@ process.on('exit', (code) => {
 //test private key for system account
 const godKey = '178194397bd5290a6322c96ea2ff61b65af792397fa9d02ff21dedf13ee9bb33';
 const storeLatestBlocks = 300; //how many blocks decoded and stored
-const storeLatestAvgBlocks = 20; //how many blocks stored for check AVG tx.
+const storeLatestAvgBlocks = 99; //how many blocks stored for check AVG tx.
+const maxDiffFromAppHeight = 30; // avg quote from proposer - how much difference
+
 const fixedExponent = 1000000;
 let manualRevertOneBlock = false;
 
@@ -609,7 +611,7 @@ let indexProtocol = {
 			}
 			
 			//hash this 
-			let hash = sha256( JSON.stringify(calcAvg) );
+			let hash = sha256( JSON.stringify(calcAvg) ).toString('hex');
 						
 //console.dir( calcAvg, {depth: 16, colors: true}); 
 //process.exit();
@@ -617,7 +619,7 @@ let indexProtocol = {
 			//check history 
 			if (indexProtocol.latestAvgStore.length > storeLatestAvgBlocks){
 				//delete first 
-				indexProtocol.latestAvgStore.shift();
+				delete indexProtocol.latestAvgStore.shift();
 			}
 			
 			//store 
@@ -704,7 +706,7 @@ let indexProtocol = {
 //console.dir( data );		
 		let _code = 'avg'; //type of TX, prefix
 		//using deterministic stringify
-		let json  = stringify( data ); 
+		let json  = JSON.stringify( data ); 
 		//use gzip?
 		/* @todo: realize sign avg quote */
 		let _hash = sha256( json ).toString('hex');
@@ -1105,65 +1107,77 @@ let server = createServer({
 			case 'AVG': {
 				console.log('AVG: CheckTx Rates');
 				
-				console.dir( z, {depth:8});
+				//console.dir( z, {depth:8});
 				
-				console.log( z[(z.length-1)] );
-				
+				//console.log( z[(z.length-1)] );
+			
 				//@todo: rewrite structure as: hash:sign:pubkey:flags:data
 				//check signature 
 				if (!z[1])	return { code: 1, log: txType + ': wrong or empty hash'};  
 				
 				let hash = z[1];
-let ass = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
-console.dir( ass, {depth:8});				
-				let data = JSON.parse( ass );
-console.dir( data, {depth:8});
-				
+				let data = JSON.parse( Buffer.from( z[(z.length-1)], 'base64').toString('utf8') );
+//console.dir( data, {depth:8});
+					
 				if (!data)	return { code: 1, log: txType + ': wrong data after parsing'};  
-				
+/**
+console.log('');
+console.log('');
+console.log('');
+console.dir( indexProtocol.latestAvgStore, {depth:64});
+console.log('');
+		
+console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgStore.length);
+**/	
+
 				//fetch local copy of avg by height
 				let localCopy = _.find(indexProtocol.latestAvgStore, function(v){
-					if (v.height == data.height && v.symbol == data.symbol)
+					if (v.height == data.blockHeight && v.symbol == data.symbol)
 						return true;
+					else
+						return false;
 				});
-/*				
-				console.log('Data from proposer');
-				console.dir( data, {depth:8});
-				console.log(' ');
-				console.log('Data from local copy');
-				console.dir( localCopy.data, {depth:8});
-				console.log(' ');
-*/				
+				
 				
 				if (!localCopy){	//we havent local data 
+					console.log('No local data from this height.');
 					//@todo: if nothing data - what to do?
-					return { code: 0 };
-				}
-				else {
-					//simple check - hash only (?)
-					if (hash == localCopy.hash){
-						//Quote are identical by hash 
-						return { code: 0 };
-					}
-					else {
-						
-						console.log('Data from proposer');
-						console.dir( data, {depth:8});
-						console.log(' ');
-						console.log('Data from local copy');
-						console.dir( localCopy.data, {depth:8});
-						console.log(' ');
-						
-						//@todo: use deep Fuzzy check, every field and scoring system to check eq						
-						//check MerkleRoot 
-						if (data.txMerkleRoot == localCopy.data.txMerkleRoot){
-							return { code: 0 };
-						}
-					}				
+					return { code: 1 };
 				}
 				
-				//check eq with local Tx 
-				//latestAvgStore:[],  //{height: height, hash: hash,  symbol: calcAvg.symbol, data: calcAvg}
+				//check height: if current height more then N distance from quote, stop to propagate it 
+				if (Math.abs(appState.blockHeight - data.blockHeight) >= maxDiffFromAppHeight){
+					console.log( 'Quote from proposer and local has big difference by height: ' + appState.blockHeight + ' (app), ' + data.blockHeight + ' (tx)');
+					
+					return { code: 1 };
+				}
+				
+				//simple check - hash only (?)
+				if (hash == localCopy.hash){
+					console.log( 'Quote from proposer and local will eq by hash: ' + hash + ' === ' + localCopy.hash);
+					//Quote are identical by hash 
+					return { code: 0 };
+				}
+				
+				console.log(' ');
+				console.log('WARN: need a Fuzzy check, we not eq with hash');
+				console.log(' ');
+				
+				console.log('Data from proposer: ' + hash);
+				console.dir( data, {depth:0});
+				console.log(' ');
+				console.log('Data from local copy');
+				console.dir( localCopy, {depth:1});
+				console.log(' ');
+				
+				
+				//@todo: use deep Fuzzy check, every field and scoring system to check eq						
+				//check MerkleRoot 
+				/*
+				if (data.txMerkleRoot == localCopy.data.txMerkleRoot){
+					return { code: 0 };
+				}
+				*/
 								
 				break;
 			}
@@ -1290,17 +1304,17 @@ console.dir( data, {depth:8});
 			case 'AVG': {
 				console.log('AVG: DeliverTx with average calc Rates');
 				
-				console.dir( z, {depth:8});
+				//@possinle optimize - do now double parse
+				let data = JSON.parse( Buffer.from( z[(z.length-1)], 'base64').toString('utf8') );
 				
-				/*
-				let x = JSON.parse( Buffer.from( z[3], 'base64').toString('utf8') );
-				
-				if (x){
-				
-					console.log('AVG: Calc Rates commited for height ' + x.blockHeight + ' (diff: ' + (appState.blockHeight - x.blockHeight) + ')');
-				
+				if (data){
+					//all check prepared at checkTx (as i known)
+					//save this as commited data 
+					saveOps.push({ type: 'put', key: 'tbl.block.'+data.blockHeight+'.avg', value: JSON.stringify(data) });
+					
+					console.log('AVG: Calc Rates commited for height ' + data.blockHeight + ' (diff: ' + (appState.blockHeight - data.blockHeight) + ')');
 				}
-				*/
+							
 				break;
 			}
 			

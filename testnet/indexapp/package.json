@@ -24,7 +24,7 @@
         "cryptocompare": "*",
         "cryptonator": "*",
         "fast-json-stable-stringify": "2.0.0",
-        "js-abci": "github:CoinIndexAgency/js-abci#4.0.5",
+        "js-abci": "github:CoinIndexAgency/js-abci#4.0.7",
         "merkletreejs": "git+https://github.com/CoinIndexAgency/merkletreejs.git#master",
         "moment": "2.*",
         "node-coindesk-api": "*",
