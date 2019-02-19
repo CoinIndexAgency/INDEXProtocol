@@ -105,7 +105,9 @@ const rocksOpt = {
 	errorIfExists: false,
 	compression: true,
 	
-	target_file_size_base: 4 * 1024 * 1024
+	maxOpenFiles: 16384,	
+	target_file_size_base: 4 * 1024 * 1024,	
+	maxFileSize : 64 * 1024 * 1024
 };
 
 	stateDb.open(rocksOpt, function(err){
@@ -151,6 +153,26 @@ let indexProtocol = {
 		rpcHealth: false, //check if local rpc up
 	},
 	
+	accountsStore : { //local in-memory account storage 
+		'MCPqykgZUJPb72vC9kgPRC6vvZm' : {
+			ids					:['MCPqykgZUJPb72vC9kgPRC6vvZm', 'token@indexprotocol.network', 'token@indexprotocol.online','indx.coin@indexprotocol.network'], 	//array of any string-based ids (global uniq!) associate with account
+			name				: 'token@indexprotocol.network',		//main name, if associated		
+			address				: 'MCPqykgZUJPb72vC9kgPRC6vvZm',
+			createdBlockHeight	: 1,
+			updatedBlockHeight  : 1,
+			type				: 'system',
+			nonce				: 0, //count tx from this acc
+			data				: {
+				assets				: [
+					{ symbol : 'INDX', amount: 9007199254740991, nonce: 0 }
+				],
+				messages			: [],
+				storage				: []
+			},
+			pubKey				: '04145da5f0ec89ffd9c8e47758e922d26b472d9e81327e16e649ab78f5ab259977756ceb5338dd0eddcff8633043b53b25b877b79f28f1d70f9b837ffaca315179'
+		}
+	}, 
+	
 	//@todo: maybe store it at rocksDb? 
 	//local storage of latest uncomitted avg quotes
 	//store latest N 
@@ -187,52 +209,29 @@ let indexProtocol = {
 				//'app'							: {}
 			},
 			
-			dataSource: {},
+			'dataSource': {},
 			
 			
 			'validatorStore':{}, //state of validators balances, emission of each block. Balances ONLY at nativeSymbol
 			
 			// !!!!!!!!!!! prototype 
+			//@todo: replace as user storages
 			'assetStore'	:	{
-				/*'IDXT': {
-					registerAt: 1547054555444,
-					regBlockHeight: 0,
-					initial: 1000000,
-					type: 'coin', //coin for native coin, token for user assets, contract - for derivative contracts
-					divide: 10,
-					maxSupply: 10000000000,
-					emission: 25, //emission per block
-					owner: '28kCp5BWu2f1qsB582EkmkeJisHa', //address of emitent
+				'IDXT': {
+					emissionBlockHeight	: 1,
+					initial				: 9007199254740991,
+					type				: 'coin', //coin for native coin, token for user assets, contract - for derivative contracts
+					divider				: 1000,
+					maxSupply			: 9007199254740991,
+					emission			: 0, //emission per block
+					owner				: 'MCPqykgZUJPb72vC9kgPRC6vvZm', //address of emitent
 										
 					tx: []
-				}*/
+				}
 			}, //symbols registry DB
 			
-			//simple accounts store
-			//address: sha256 hash of full account obj
-			// full obj stores at tbl.accounts and tbl.system.namelookup (name/altnames to address map)
-			
-			
-			'accountStore'	:	{
-				/*'28kCp5BWu2f1qsB582EkmkeJisHa' : {
-					name: 'raiden@coinindex.agency', //main name of account
-					//altNames:[], //array of alternative names (added by scecial trx)
-					createdAt: 1547054555443,
-					createdBlockHeight: 0,
-					status: 'open',
-					type: 'user',
-					nonce: 0,
-					pubKey: '04145da5f0ec89ffd9c8e47758e922d26b472d9e81327e16e649ab78f5ab259977756ceb5338dd0eddcff8633043b53b25b877b79f28f1d70f9b837ffaca315179',
-					
-					assets:{
-						'IDXT' : {	//default, base coin of network
-							amount: 10000000 //amount (*divider)
-						}
-					},
-					
-					tx: []
-				}*/
-			} //user accounts
+			//simple accounts store, only address
+			'accountStore'	:	[ 'MCPqykgZUJPb72vC9kgPRC6vvZm' ] //user accounts
 		};
 	},
 	//'latestAvg'		: null,	//latest avg data	
@@ -285,6 +284,9 @@ let indexProtocol = {
 						appState[ i ] = v;
 					});
 					
+					//@todo remove after full update
+					//if ( typeof( appState.accountStore ) != 'array' )
+					//	appState.accountStore = [];
 					
 					if (process.argv.indexOf('dumpappstate') != -1){
 						
@@ -309,6 +311,22 @@ let indexProtocol = {
 						
 //TEST
 //appState.blockHeight = 99999;
+					console.log('Found: ' + appState.accountStore.length + ' accounts. ');
+					
+					//@todo: check it in parralel and batch (ol limitation of max)
+					_.each(appState.accountStore, function(a){
+						
+						stateDb.get('tbl.accounts.' + a, function(err, val){
+							if (!err && val && Buffer.isBuffer(val)){
+								let acc = JSON.parse( val.toString('utf8') );
+								
+								if (acc){
+									indexProtocol.accountsStore[ a ] = acc;
+								}
+							}
+						});
+						
+					});
 					
 					//check it 
 					let calcAppHash = indexProtocol.calcHash( JSON.stringify(appState), false);
@@ -322,7 +340,7 @@ let indexProtocol = {
 							console.log('loaded AppHash: ' + loadedAppHash);
 							console.log('rehash AppHash: ' + calcAppHash);
 							
-				
+//@todo DISABLE FOR DEV
 							if (loadedAppHash === calcAppHash){
 								appState.appHash = calcAppHash;
 								
@@ -425,6 +443,7 @@ let indexProtocol = {
 		});
 	},
 	
+	/**
 	//fetch pubKey from accounts base 
 	pubKeyFrom: function( id ){
 		if (!id) return false;
@@ -448,7 +467,9 @@ let indexProtocol = {
 		else
 			return false;		
 	},
+	**/
 	
+	//need to replace !
 	getAddressBy: function( id ){
 		if (!id) return false;
 		
@@ -477,8 +498,8 @@ let indexProtocol = {
 				
 				blockHeight			: height, 
 				blockHash			: appState.blockHash,
-				blockCommit			: 0, //change to block, commited. for verify = set to 0
-				
+				blockCommit			: 0, //0 for verify
+							
 				txMerkleRoot		: '', //Merkle root from tx, included in
 								
 				avgPrice			: 0,
@@ -640,9 +661,6 @@ let indexProtocol = {
 		if (delayedTaskQueue.length > 0){
 			_.each(delayedTaskQueue, function(v, i){
 				if (v && v.exec){
-					if (v.exec == 'tbl.accounts.create')
-						indexProtocol.processNewAccountReg( v, height );
-					else
 					if (v.exec == 'tbl.system.rewards')
 						indexProtocol.processValidatorsBlockReward( v, height );
 					else
@@ -723,44 +741,6 @@ let indexProtocol = {
 		let tx = _code + ':' + _hash + '::::' + Buffer.from(json, 'utf8').toString('base64');
 //console.dir( tx );		
 		return tx;		
-	},
-	
-	//new account registration
-	processNewAccountReg: function(data, height){
-		if (!data || !height) return false; 
-		
-		let accObj = {
-			name				: data.name,
-			address				: data.addr,
-			createdBlockHeight	: height,
-			updatedBlockHeight  : height,
-			status				: 'created',  //in next tx will be changed to active
-			type				: data.type,
-			nonce				: 0, //count tx from this acc
-			pubKey				: data.pubk,
-			
-			assets				: {},					
-			tx					: [] //array of hash (?) of all transactions in/out from acc
-		};
-		
-		//adding default native token 
-		accObj.assets[ appState.options.nativeSymbol ] = { amount: appState.options.initialNativeCoinBalance };
-		
-console.debug( accObj );
-		
-		let sha256  = crypto.createHash('sha256');	
-		let accJson = stringify( accObj );
-		let accHash = sha256.update( Buffer.from( accJson, 'utf8') ).digest('hex');
-		
-		//add to appState 
-		appState.accountStore[ data.addr ] = accHash;
-		
-		saveOps.push({ type: 'put', key: 'tbl.account.' + data.addr, value: accJson });
-		//save as reverse map to fast lookup by name/altnames.
-		//@todo: Possible to optimize by one big hash-map
-		saveOps.push({ type: 'put', key: 'tbl.system.namelookup.' + accObj.name, value: data.addr }); 
-
-		return true;
 	},
 	
 	//transfer asset by one account to other
@@ -850,6 +830,18 @@ let server = createServer({
 	initChain: function(request){
 		console.log('Call: InitChain');
 		
+		/***
+		console.dir( request, {depth: 64, color: true});
+		
+		let z = crypto.createHash('sha256').update( request.validators[0].pubKey.data ).digest('hex');
+
+		console.dir( z, {depth: 4, color: true});
+		
+		console.log(' ');
+		
+		process.exit();
+		***/
+		
 		let chainId = request.chainId;
 		
 		console.log('Staring new chain with ID: ' + chainId);
@@ -857,7 +849,29 @@ let server = createServer({
 		console.log(' ************** IMPORTANT!   CLEAN DB ************** ');		
 		
 		//default value for appState
-		appState = indexProtocol.getDefaultState();		
+		appState = indexProtocol.getDefaultState();
+
+		//process app_state 
+		if (request.appStateBytes.length > 1){
+			
+			let aBuf = Buffer.from(request.appStateBytes.toString('utf8'), 'base64').toString('utf8');
+			let genesisAppState = JSON.parse( aBuf );
+			
+			//assign options 
+			if (genesisAppState.options){
+				appState.options = _.extend( appState.options, genesisAppState.options );
+			}
+			
+			
+			
+			
+			console.dir( genesisAppState, {depth: 16, color: true});
+		
+			console.log(' ');
+		
+			process.exit();
+			
+		}
 		
 		return {
 			code: 0,
@@ -902,13 +916,13 @@ let server = createServer({
 		
 		if (request.path){
 			let path = request.path.toLowerCase();
-			let data = request.data; //Buffer 
+			let data = request.data; //Buffer   
 			
 			//var result = new Promise();
 			
 			//@todo: use browser-based account generation
 			//@todo2: add HD and seed-based account 
-			if (path === 'getaccountaddress'){
+			if (path === 'generatenewaccount'){
 				//generate new account (without safe)
 				const 	ecdh 	= 	crypto.createECDH('secp256k1');
 						ecdh.generateKeys();
@@ -917,9 +931,9 @@ let server = createServer({
 				let pubKey = ecdh.getPublicKey();
 				let address = '';
 
-				let sha256 = crypto.createHash('sha256');
+				//let sha256 = crypto.createHash('sha256');
 				let ripemd160 = crypto.createHash('ripemd160');
-				let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).digest(); // .digest('hex');
+				let hash = ripemd160.update( sha256( pubKey.toString('hex') ) ).digest(); // .digest('hex');
 
 					address = bs58.encode( hash );
 					
@@ -928,40 +942,81 @@ let server = createServer({
 					return {code: 1}; 
 			
 		console.log('===========================');
+		console.log('Blockchain Height: ' + appState.blockHeight);
 		console.log('Generate new account (TEST):');
 		console.log('privateKey: ' + privKey.toString('hex'));
 		console.log('publicKey:  ' + pubKey.toString('hex'));
 		console.log('wallet address: ' + address);
 		console.log('===========================');
+		
+		
+				let accObj = {
+					ids					:[address], 	//array of any string-based ids (global uniq!) associate with account
+					name				: address,		//main name, if associated		
+					address				: address,
+					createdBlockHeight	: 0,
+					updatedBlockHeight  : 0,
+					type				: 'user',
+					nonce				: 0, //count tx from this acc
+					data				: {
+						assets				: [],
+						messages			: [],
+						storage				: []
+					},
+					pubKey				: pubKey.toString('hex')
+				};
 				
-				return {code: 0, value: Buffer.from(JSON.stringify( {
-					address: address,
-					pubKey:	pubKey.toString('hex'),
-					privKey: privKey.toString('hex')
-				} ), 'utf8').toString('base64')};
+				let json = JSON.stringify( accObj );
+		
+				//create Tx to register new account 
+				//using deterministic stringify
+				let _hash = crypto.createHash('sha256').update( json ).digest();
+				let signature = secp256k1.sign(_hash, privKey).signature;
+		
+				//store at tx as separated part (code:hash:signature:pubkey:flags:txbody)			
+				let tx = 'reg:' + _hash.toString('hex') + ':'+signature.toString('hex')+':'+pubKey.toString('hex')+'::' + Buffer.from(json, 'utf8').toString('base64');
 				
+				//console.log( '   ' );
+				//console.log( tx );
+				//console.log( '   ' );
 				
-				/**
 				return new Promise(function(resolve, reject){
-					setTimeout(function(){
-						return resolve( {code: 0, value: Buffer.from(JSON.stringify({"fuck" : 'hhhhhhhhhhhhhhhhhhhh', env: process.config }), 'utf8').toString('base64')} ); //{ code: 0, data: 'ggggg', response: 'klkhkjhkhk'});
-					}, 5000);
+					
+					http.get(indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime(), {agent:rpcHttpAgent}, function(resp){
+						
+						//console.dir( resp, {depth: 16} );
+					
+						
+						return resolve({code: 0, value: Buffer.from(JSON.stringify( {
+							address: address,
+							pubKey:	pubKey.toString('hex'),
+							privKey: privKey.toString('hex')		
+						} ), 'utf8').toString('base64')});
+						
+					}).on('error', (e) => {
+					  console.error(`Got error: ${e.message}`);
+					  
+					  return reject({code: 1, value: Buffer.from(e.message, 'utf8').toString('base64')});
+					});
+					
 				});
-				**/
 			}
 			else
 			if (path === 'getavgtx'){
 				let _height = parseInt( data.toString('utf8') );
 				
 				if (!_height)
-					return { code: 1 };
+					return { code: 0 };
 				
 				if (_height > appState.blockHeight)
-					return { code: 1 };
+					return { code: 0 };
 				
 				return new Promise(function(resolve, reject){
 					
 					stateDb.get('tbl.block.'+_height+'.avg', function(err, val){
+						//console.dir( err, {depth:2} );	
+						//console.dir( val, {depth:2} );	
+						
 						if (!err && val){
 							console.log('Query fetch: avg tx from block #' + _height);
 							
@@ -969,10 +1024,27 @@ let server = createServer({
 								val = val.toString('utf8');								
 							}
 							//@todo: optimize code/decode
-							return resolve( {code: 0, value: Buffer.from(val, 'utf8').toString('base64')} );
+							return resolve( {code: 0, value: Buffer.from(val, 'utf8').toString('base64')} );   
 						}
-						else
-							return reject( {code:1} );
+						else {
+							//check local version if no comitted
+							let localCopy = _.find(indexProtocol.latestAvgStore, function(v){
+								if (v.height == _height /*@todo&& v.symbol == data.symbol*/)
+									return true;
+								else
+									return false;
+							});
+							
+							if (localCopy && localCopy.data){
+								return resolve( {code: 0, value: Buffer.from(JSON.stringify(localCopy.data), 'utf8').toString('base64')} );
+							}
+							else {
+								console.log('ERROR: No commited and NO local AVG fro height: ' + _height);
+							}
+							
+							return reject( {code:0} );
+						
+						}
 					});
 					
 				});				
@@ -1032,17 +1104,18 @@ let server = createServer({
 				let maxCountAddr = 1000; //maximum of addresses
 				let _res = [];
 				
-				//@todo: use find
-				_.each(appState.accountStore, function(v, addr){
+				console.dir( indexProtocol.accountsStore, {depth: 16});
+				
+				_.each(indexProtocol.accountsStore, function(v, addr){
 					if (_res.length > maxCountAddr) return;
 					
 					_res.push({
 						address	:	v.address,
 						name	:	v.name,
 						height	:	v.createdBlockHeight,
-						status	:	v.status,
 						type	:	v.type,
 						nonce	: 	v.nonce,
+						balance :	0, //@todo balance of native coin
 						pubKey	: 	v.pubKey
 					});
 					
@@ -1061,13 +1134,6 @@ let server = createServer({
 		
 		
 		return { code: 1 };
-		//let path = request.path;
-		
-		//let tmp = Buffer.from( path, 'utf8').toString('utf8');
-		
-		//console.debug( tmp );
-
-		//return { code: 0 };
 	},
   
 	checkTx: function(request) {
@@ -1113,10 +1179,6 @@ let server = createServer({
 			}
 			case 'AVG': {
 				console.log('AVG: CheckTx Rates');
-				
-				//console.dir( z, {depth:8});
-				
-				//console.log( z[(z.length-1)] );
 			
 				//@todo: rewrite structure as: hash:sign:pubkey:flags:data
 				//check signature 
@@ -1127,15 +1189,6 @@ let server = createServer({
 //console.dir( data, {depth:8});
 					
 				if (!data)	return { code: 1, log: txType + ': wrong data after parsing'};     
-/**
-console.log('');
-console.log('');
-console.log('');
-console.dir( indexProtocol.latestAvgStore, {depth:64});
-console.log('');
-		
-console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgStore.length);
-**/	
 
 				//fetch local copy of avg by height
 				let localCopy = _.find(indexProtocol.latestAvgStore, function(v){
@@ -1188,29 +1241,62 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 								
 				break;
 			}
+			case 'REG': {
+				console.log('REG: checkTx of register new address');
+				
+				//console.dir( z, {depth:16});
+				
+				//check base structure of tx: code:hash:sign:pubkey:flags:data
+				//check signature 
+				
+				if (z.length != 6)		return { code: 1, log: txType + ': wrong tx length'};
+				if (!z[(z.length-1)]) 	return { code: 1, log: txType + ': empty data'}; 
+				if (!z[1])				return { code: 1, log: txType + ': wrong or empty hash'}; 
+				if (!z[3])				return { code: 1, log: txType + ': wrong public key'}; 
+				
+				var pubKey = z[3].toLowerCase();
+				
+				//simple check pubkey at local storage 
+				return new Promise(function(resolve, reject){
+					//lookup table pubkey to address
+					stateDb.get('tbl.accounts.__lookup.pubkeys.' + pubKey, function(err, val){
+						console.log('Check avalability of pubKey at lookup tbl.');
+					
+						if (!err && val){
+							if (Buffer.isBuffer(val)){
+								val = val.toString('utf8');								
+							}
+							
+							if (val && val != ''){
+								console.log('Address already exists');
+								
+								return reject({code: 1, log: 'Address already exists'});
+							}
+							
+							return resolve( {code: 0} );
+						}
+						else
+							return resolve( {code: 0} );
+						
+					});
+				});
+				
+				break;
+			}
 			
 			default: {	
 				break;
 			}			
 		}
-		
 				
-		let ztag = [];
-			ztag.push({key: 'year', value : '2019'}); 
-			ztag.push({key: 'zear', value : 'test'}); 
-				
-		return { code: 0, tags: ztag }; 
-		//return { code: 0 }; //, log: 'tx succeeded'
+		return { code: 0 }; 
 	},
 
 	deliverTx: function(request) {
 		//console.log('Call: DeliverTx');    
-		//console.debug( request );  
-		//return { code: 0 };
-
 		let tx = request.tx.toString('utf8'); //'base64'); //Buffer 
 		
-		//updated format: code:signature:pubkey:txbody		
+		//updated format: code:hash:sign:pubkey:flags:data
 		let z  = tx.split(':'); //format: CODE:<base64 transaction body>
 
 		if (!tx) return { code: 0, log: 'Wrong tx type' };
@@ -1218,9 +1304,6 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 
 		let txType = z[0].toUpperCase();
 		let tags = {};
-
-		//console.debug( txType );
-		//console.debug( z );
 
 		switch ( txType ){
 			
@@ -1278,7 +1361,7 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 					
 					tags[ 'tx.hour' ] = _ts.format('HH');
 					tags[ 'tx.time' ] = _ts.format('HH:mm');
-
+					
 					delete x._hash;
 
 					currentBlockStore.push( x );
@@ -1303,8 +1386,8 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 				if (data){
 					//all check prepared at checkTx (as i known)
 					//save this as commited data 
-					data.blockCommit = appState.blockHeight; 					
-					
+					data.blockCommit = appState.blockHeight; 		
+
 					saveOps.push({ type: 'put', key: 'tbl.block.'+data.blockHeight+'.avg', value: JSON.stringify(data) });
 					
 					console.log('AVG: Calc Rates commited for height ' + data.blockHeight + ' (diff: ' + (appState.blockHeight - data.blockHeight) + ')');
@@ -1314,61 +1397,65 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 			}
 			
 			//new account register action 
-			case 'REG' : {
-				let _x = Buffer.from( z[1], 'base64').toString('utf8');
-				var x = JSON.parse( _x );
+			//code:hash:sign:pubkey:flags:data
+			case 'REG' : {				
+				console.log('REG: deliverTx call');
 				
-				if (x){
-					//1. check all required fields 
-					//2. exclude signature, replace it to ''
-					//3. Verify signature 
-					//4. if OK, check account present at state.accountStore. If Ok = wrong tx 
-					//5. check system nslookup tbl for name. If Ok - wrong tx 
-					//6. If OK - add to action queue (real create will be delegated to block commit)
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase();
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+				
+				if (data){
+					let _hash = sha256( rawData );
 					
-					/*
-						{
-							exec: 'tbl.accounts.create',	//ns of actions
-							addr: address,
-							pubk: pubKey.toString('hex'),
-							name: 'raiden@indexprotocol.network',
-							type: 'user', //index, provider, issuer, exchange, fund... any type
-							sign: ''
-						}
-					*/
-					
-					console.debug( x );
-					
-					//@todo: more complex check each fileds
-					if (x.exec == 'tbl.accounts.create' && x.addr && x.pubk && x.name && x.type == 'user' && x.sign){
-						let sign = x.sign;
-							x.sign = '';
-						let pubKey = x.pubk;
-						let sha256 = crypto.createHash('sha256');						
-						let xHash = sha256.update( Buffer.from( stringify( x ), 'utf8') ).digest();
+					if (_hash.toString('hex').toLowerCase() != hash){
+						console.log('REG: Invalid hash, compute and stored/signed');
 						
-						let vRes = secp256k1.verify(xHash, Buffer.from(sign, 'hex'), Buffer.from(pubKey, 'hex'));
-
-						if (vRes == true){
-							//sign OK 
-							
-							if (!appState.accountStore[ x.addr ]){							
-								delayedTaskQueue.push( x ); //do this at the commit of block
-							
-								return { code: 0, log: 'REG:' + x.name + ';' + x.addr + ';OK' };
-							}
-						}
+						return { code: 1, log: 'Invalid hash' };
+					}
+			
+					let checkSign = secp256k1.verify(_hash, Buffer.from(sign, 'hex'), Buffer.from(pubk, 'hex'));
+					
+					if (checkSign != true){
+						console.log('REG: Invalid signature');
 						
-					}					
+						return { code: 1, log: 'Invalid signature' };   
+					}
+					
+					if (!data.address || !data.ids || data.ids.length < 1){
+						console.log('REG: Invalid or empty address');
+						
+						return { code: 1, log: 'Invalid or empty address' };
+					}
+					
+					data.createdBlockHeight = appState.blockHeight;
+					data.updatedBlockHeight = appState.blockHeight;
+					
+					appState.accountStore.push( data.address );
+					
+					//Save to systems accounts 
+					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.pubkeys.'+pubk, value: data.address});
+					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.address.'+data.address, value: pubk});
+					saveOps.push({type: 'put', key: 'tbl.accounts.'+data.address, value:JSON.stringify( data )});
+					
+					indexProtocol.accountsStore[ data.address ] = data;
+					
+					console.dir( data, {depth:8} );
+					
+					return { code: 0, log: 'REG:' + data.address }; //, log: 'REG:' + x.name + ';' + x.addr + ';OK' };
 				}
-				
-				//DEBUG
-				return { code: 0, log: 'Invalid tx format' };
-				
+				else
+					return { code: 1, log: 'Invalid data of reg tx' };
+		
 				break;
 			}
 			
 			//Transfer active from one address to another address
+			//REPLACE TO NEWWW
 			case 'TRA' : {
 				let _x = Buffer.from( z[1], 'base64').toString('utf8');
 				var x = JSON.parse( _x );
@@ -1614,13 +1701,12 @@ console.log('indexProtocol.latestAvgStore.length: ' + indexProtocol.latestAvgSto
 				{ type: 'put', key: 'blockHeight', value: appState.blockHeight },
 				
 				{ type: 'put', key: 'appState', value: jsonAppState },
-				{ type: 'put', key: 'tbl.system.lastavg', value: JSON.stringify( indexProtocol.lastAvg ) }
+				//{ type: 'put', key: 'tbl.system.lastavg', value: JSON.stringify( indexProtocol.lastAvg ) }, 
 				/** @todo: more db size 
 				//save state history to fast revert 
 				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.appstate', value: appState.appHash + '::' + jsonAppState },
 				**/
-				//store only comitted
-				//{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: JSON.stringify(indexProtocol.lastAvg) },
+				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: JSON.stringify(indexProtocol.lastAvg) }
 				//TEST{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: JSON.stringify(appState.blockStore[0])}
 			];
 			
@@ -1728,6 +1814,63 @@ setInterval(function(){
 	
 }, 60000);
 **/
+
+//Quick fix for RocksDB/LevelDOWN, no set option to delete OLD.log.ХХХХ files
+setInterval(function(){
+	//delete older then 1h
+	let ts = new Date().getTime() - (3600 * 1000);
+	
+	console.log('- ');
+	console.log('WARN: Deleting old RocksDB log files (older then 1h, from: ' + moment.unix(Math.trunc(ts/1000)).format('HH:mm DD/MM/YYYY'));
+	console.log('WARN: stateDb path: ' + stateDbPath);
+	
+	if (fs.existsSync( stateDbPath )){
+		
+		fs.readdir( stateDbPath, function(err, file){
+			
+			_.each(file, function(f){
+				//check file name as LOG.old.XXXX
+				if (f.indexOf('LOG.old') === 0){
+					let tmp = fs.statSync( stateDbPath + '/' + f );
+					let mtime = moment.unix( Math.trunc( tmp.mtime / 1000 ) );
+					
+					if (moment().diff( mtime, 'minutes') > 60){
+						console.log('file: ' + f + ' deleting....');
+						
+						fs.unlinkSync( stateDbPath + '/' + f );
+					}
+				}
+			});
+		} );
+	}
+	
+	console.log('- ');
+	
+}, 15 * 60 * 1000);
+
+
+/**
+//@todo: optimize this, mybe explode to dedicated rocksdb base for accounts only
+//save accounts store every minute 
+setInterval(function(){
+	console.log('CheckPoint: save all Accounts from memory to db as snapshot');
+	
+	var _tmp = JSON.stringify( indexProtocol.accountsStore );
+	
+	if (_tmp){
+		
+		stateDb.put('accountsStore', _tmp, function(err){
+			if (!err)
+				console.log('CheckPoint OK: successfull store accounts to rocksDb at disk');
+		});
+	}
+	else
+		console.log('Error at checkpoit accounts save');
+	
+}, 1 * 60 * 1000); 
+**/
+
+
 //===
 
 //initial subscribe to events

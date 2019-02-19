@@ -7,7 +7,7 @@
 	var height = 0;
 	
 	function updatePage(){
-		$.getJSON('https://rpc.testnet.indexprotocol.online/status', function(res){
+		$.getJSON(indexProtocol.networkURI + '/status', function(res){
 			let obj = res.result;
 //console.log( obj );
 //console.log( indexProtocol.height );
@@ -15,7 +15,7 @@
 			var el = $('.content');
 				el.find('#latest-block-height').html( '<a href="javascript: void indexProtocol.blockPage('+obj.sync_info.latest_block_height+');">'+ obj.sync_info.latest_block_height + '</a>');
 			
-			var latestDt = moment( obj.sync_info.latest_block_time );	
+			var latestDt = moment.utc( obj.sync_info.latest_block_time );	
 				el.find('#latest-block-datetime').html( latestDt.format('DD.MM.YYYY <br />HH:mm ss') );
 				
 			var latestHash = obj.sync_info.latest_block_hash.substring( 0, 7 ); 
@@ -45,7 +45,7 @@
 		var el = $('.content');
 		_curBlock = fromHeight;
 		
-		$.getJSON('https://rpc.testnet.indexprotocol.online/blockchain?maxHeight=' + fromHeight, function(res){
+		$.getJSON(indexProtocol.networkURI + '/blockchain?maxHeight=' + fromHeight, function(res){
 			var obj = res.result;
 			var tmp = '';
 			
@@ -54,7 +54,7 @@
 			
 			_.each(obj.block_metas, function(v, i){
 				let t = '';
-				let tm = moment(v.header.time);
+				let tm = moment.utc(v.header.time);
 				let dft = ' ';
 				
 				if (i == 0){
@@ -118,10 +118,7 @@
 			
 		updateExplorerInfo(fromHeight);
 	}
-	
-	indexProtocol._timer = setInterval(function(){
-		updatePage();
-	}, 1000);
+
 </script>
 
 

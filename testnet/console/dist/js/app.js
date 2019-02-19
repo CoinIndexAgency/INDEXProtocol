@@ -3,7 +3,37 @@ $(function () {
   'use strict';
   
   indexProtocol = _.extend({
+	  
+	networkURI : 'https://rpc.testnet.indexprotocol.online', //current network address
+
+	switchNetwork: function(net){
+		if (net == 'testnet'){
+			$('.select-network').html( '<i class="fa fa-sitemap"></i> Alpha testnet' );
+			this.networkURI = 'https://rpc.testnet.indexprotocol.online';
+		}
+		else
+		if (net == 'devnet'){
+			$('.select-network').html( '<i class="fa fa-terminal"></i> Developers network' );
+			this.networkURI = 'https://rpc.dev.testnet.indexprotocol.online';
+		}
+		
+		window.localStorage.setItem('networkType', net);
+	},
+	  
 	run: function(){
+		let storage = window.localStorage;
+		
+		if (storage){
+			let netType = storage.getItem('networkType');
+			
+			if (netType)
+				this.switchNetwork( netType );
+		}
+		
+		
+		
+		
+		
 		//search 
 		/*
 		$('#sidebar-search-form').submit(function(e){
@@ -72,7 +102,7 @@ $(function () {
 	
 	txTypes: {
 		'CET' : 'Exchange',
-		'AVG' : 'Aggregated',
+		'AVG' : 'Consensus Average',
 		'REG' : 'New account',
 		'TRA' : 'Transfer'		
 	},
@@ -300,9 +330,9 @@ $(function () {
 			el.empty().load('/console/block.page.html?height=' + height);
 	},
 	
-	walletPage: function(){
+	accountsPage: function(){
 		var el = $('#console-content-wrapper');
-			el.empty().load('/console/wallet.page.html');
+			el.empty().load('/console/accounts.page.html');
 	},
 	
 	datasourcePage: function(){
@@ -312,7 +342,7 @@ $(function () {
 	
 	
 	test: function(){
-		$.getJSON("https://rpc.testnet.indexprotocol.online/tx_search?query=\"year='2019'\"", function(res){ 
+		$.getJSON( this.networkURI + "/tx_search?query=\"year='2019'\"", function(res){ 
 			console.dir( res );
 		});
 	}

@@ -10,17 +10,17 @@ console.log("\n");
 console.log('INDEXProtocol testnet cli tools');
 //console.log('WARNING: used default TEST private key!');
 console.log("\n");
-/***
+
 //default private key
 let privKey = Buffer.from('178194397bd5290a6322c96ea2ff61b65af792397fa9d02ff21dedf13ee9bb33', 'hex');
 
 console.log("Private key: " + privKey.toString('hex'));
 
-const 	ecdh = crypto.createECDH('secp256k1');
+var 	_ecdh = crypto.createECDH('secp256k1');
 
-		ecdh.setPrivateKey( privKey );
+		_ecdh.setPrivateKey( privKey );
 
-let pubKey = ecdh.getPublicKey('hex');
+let pubKey = _ecdh.getPublicKey('hex');
 
 
 //let pubKey = secp256k1.publicKeyCreate(privKey, false);
@@ -39,7 +39,9 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 	console.log('\n');
 	console.log( 'Address (base58 encoded): ' + address );
 	console.log('\n');
-*/	
+	
+	process.exit();
+
 	
 	let dataSources = {
 		'cryptofacilities' : {
@@ -47,8 +49,7 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 			site : 'https://www.cryptofacilities.com',
 			country : 'UK', 
 			api: 'https://www.cryptofacilities.com/derivatives/api/v3'
-		}
-		/**
+		},		
 		
 		'coinMarketCap' : {
 			name : 'CoinMarketCap',
@@ -109,7 +110,7 @@ let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).
 			name : 'BitcoinCharts',
 			site : 'https://bitcoincharts.com',
 			country : 'UNK'
-		} **/
+		} 
 	};
 		
 		/*

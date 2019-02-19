@@ -9,13 +9,13 @@
 	
 	
 	function updatePage(){
-		$.getJSON('https://rpc.testnet.indexprotocol.online/status', function(res){
+		$.getJSON(indexProtocol.networkURI + '/status', function(res){
 			let obj = res.result;
 			
 			var el = $('.content');
 				el.find('#latest-block-height').html( '<a href="javascript: void indexProtocol.blockPage('+obj.sync_info.latest_block_height+');">'+ obj.sync_info.latest_block_height + '</a>');
 			
-			var latestDt = moment( obj.sync_info.latest_block_time );	
+			var latestDt = moment.utc( obj.sync_info.latest_block_time );	
 				el.find('#latest-block-datetime').html( latestDt.format('DD.MM.YYYY <br />HH:mm ss') );
 				
 			var latestHash = obj.sync_info.latest_block_hash.substring( 0, 7 ); 
@@ -56,11 +56,6 @@
 
 	}
 
-	
-	
-	indexProtocol._timer = setInterval(function(){
-		updatePage();
-	}, 3000);
 </script>
 
 

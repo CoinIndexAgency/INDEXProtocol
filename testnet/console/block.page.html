@@ -5,13 +5,13 @@
 	$('.content').hide(); 	
 	
 	function updatePage(){
-		$.getJSON('https://rpc.testnet.indexprotocol.online/status', function(res){
+		$.getJSON( indexProtocol.networkURI +  '/status', function(res){
 			let obj = res.result;
 			
 			var el = $('.content');
 				el.find('#latest-block-height').html( '<a href="javascript: void indexProtocol.blockPage('+obj.sync_info.latest_block_height+');">'+ obj.sync_info.latest_block_height + '</a>');
 			
-			var latestDt = moment( obj.sync_info.latest_block_time );	
+			var latestDt = moment.utc( obj.sync_info.latest_block_time );	
 				el.find('#latest-block-datetime').html( latestDt.format('DD.MM.YYYY <br />HH:mm ss') );
 				
 			var latestHash = obj.sync_info.latest_block_hash.substring( 0, 7 ); 
@@ -42,7 +42,7 @@
 			
 		if (!height) return;
 
-		$.getJSON('https://rpc.testnet.indexprotocol.online/block?height=' + height, function(res){
+		$.getJSON(indexProtocol.networkURI + '/block?height=' + height, function(res){
 			var obj = res.result;
 			var tmp = '';
 			
@@ -55,7 +55,7 @@
 			var b = obj.block.header; 
 			let realHeight = parseInt( b.height );
 			
-			let bt = moment(b.time); //first block 
+			let bt = moment.utc(b.time); //first block 
 			let t = '<span title="Block commit time">'+bt.format('DD.MM.YYYY HH:mm:ss')+'</span>';   
 				
 			if (b.num_txs > 0)
@@ -116,7 +116,8 @@
 				'CET' : '',
 				'REG' : '',
 				'TRA' : '',
-				'IND' : ''
+				'IND' : '',
+				'AVG' : ''
 			};
 			
 			var indices = []; //list of indices at this block
@@ -182,6 +183,12 @@
 						'<td><span style="cursor:pointer;" title="This data SIGNED by private key from Data Provider. Validate it at any time (see: next testnet). Full signature: '+d.sign+'"><a href="#">'+d.sign.substr(0, 32)+'</a></span></td>' + 
 						'<td><small class="label label-success" style="cursor:pointer;" title="Validation of signature"><i class="fas fa-signature"></i>  <i title="Full signature: '+d.sign+'">verified</i></small></td>';
 				}
+				else
+				if (tCode == 'AVG'){
+					console.log('AVG quote');
+					console.dir( d );
+				}
+				
 				
 				ts[ tCode ] = ts[ tCode ] + '<tr style="text-align:center;">' + z + '</tr>';
 			});
@@ -196,7 +203,7 @@
 			el.show();	
 
 			//==============
-			$.getJSON('https://rpc.testnet.indexprotocol.online/abci_query?path="getavgtx"&data="'+height+'"', function(res){
+			$.getJSON(indexProtocol.networkURI + '/abci_query?path="getavgtx"&data="'+height+'"', function(res){
 				if (!res || !res.result || !res.result.response || !res.result.response.value)
 					return;
 				
@@ -209,18 +216,18 @@
 				
 				if (!obj) return; 
 				
-				//console.log('avg tx for height: ' + height);
-				//console.log( obj );
+				console.log('avg tx for height: ' + height);
+				console.log( obj );
 				
-				/*
-						<th style="text-align:center;">Symbol</th>
-						<th style="text-align:center;">Price</th>
-						<th style="text-align:center;">VWAP</th>
-						<th style="text-align:center;">Min/Max</th>
-						<th style="text-align:center;">Amn</th>
-						<th style="text-align:center;">Vol</th>
-					<th style="text-align:center;">Tx/Ex</th>
-				*/
+				let _sign = ''; 
+				
+				if (obj.blockCommit === 0){
+					//uncomitted, may be non-deterministic 
+					_sign = '<small class="label label-default" style="cursor:pointer;" title="Quote NOT commited at chain! Only as indicative without any garantee or proofs"><i class="fas fa-file-signature"></i> <i>non-commited</i></small>';
+				}
+				else {
+					_sign = '<small class="label label-warning" style="cursor:pointer;" title="All used data may be verify by Merkle Proof (see: next testnet)"><i class="fas fa-file-signature"></i> <i>trusted by #'+obj.blockCommit+'</i></small>';
+				}
 				
 				
 				let z = '';				
@@ -232,11 +239,7 @@
 						'<td>'+Number( parseInt(obj.totalAmount) / 1000000 ).toFixed(3)+'</td>' + 
 						'<td>'+Number( parseInt(obj.totalVolume) / 1000000 ).toFixed(3)+'</td>' + 
 						'<td style="cursor:pointer;" title="Total txs and unique exchanges, used to calculate this rate">'+obj.totalTx+'/'+obj.exchangesIncluded.length+'</td>' + 
-						'<td><small class="label label-warning" style="cursor:pointer;" title="All used data may be verify by Merkle Proof (see: next testnet)"><i class="fas fa-file-signature"></i> <i>trusted</i></small></td>';
-						
-					
-						
-						
+						'<td>'+_sign+'</td>';
 						
 				el.find('#avg-cet-tbl').empty().html( '<tr style="text-align:center;">' + z + '</tr>' );
 				
@@ -250,11 +253,6 @@
 		});		
 	}
 
-	
-	
-	indexProtocol._timer = setInterval(function(){
-		updatePage();
-	}, 1000);
 </script>
 
 
