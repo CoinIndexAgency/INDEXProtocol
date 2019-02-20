@@ -22,6 +22,7 @@ var genesisAppState = {
 		'nativeSymbol'				: 'IDXT',  //tiker for native coin at this network
 		'initialNativeCoinBalance'	: 1000000000,	//for any new account TEST balance 
 		'defaultEmitent'			: 'emitent@indexprotocol.network',
+		'addressPrefix'				: 'indxt', //prefix fro all addresses (INDX-Test)
 		'forbiddenIds'				: [
 			'@indexprotocol.ltd', 
 			'emitent@indexprotocol.network', 
@@ -69,13 +70,13 @@ _.each(genesis.validators, function(v){
 
 	//IDXT - GlobalCode, 01 - version (e.g. ate chain-id), TEST - codename of network
 	
-	let hash = ripemd160.update( Buffer.from(genesis.chain_id, 'utf8') ).update( sha256.update( pubKey.toString('hex') ).digest() ).digest();
+	let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).digest();
 	
 	//native address of network
-	let address = bs58.encode( hash );
+	let address = genesisAppState.options.addressPrefix + bs58.encode( hash );
 
 	let acc = {
-		ids					:[address, tAddr], 
+		ids					:[tAddr], //add native address from Tendermint as alt
 		name				: tName + '@indexprotocol.network',		//main name, if associated		
 		address				: address,
 		createdBlockHeight	: 0,
@@ -93,9 +94,13 @@ _.each(genesis.validators, function(v){
 	let axHash = crypto.createHash('sha256').update( JSON.stringify( acc ) ).digest();
 	let sign   = secp256k1.sign(axHash, privKey).signature;
 	
-	genesisAppState.validatorsKeys.push({ 'address' : tAddr, 'privKey' : privKey.toString('hex') });
-
+	/*
+	genesisAppState.validatorsKeys.push({ 'address' : tAddr, 'name' : tName, 'privKey' : privKey.toString('hex') });
+	*/
+	_valPrivateKeys.push({ 'address' : address, 'taddress' : tAddr, 'name' : tName, 'privKey' : privKey.toString('hex') });
+	
 	genesisAppState.accounts.push({
+		addr: address,
 		hash: axHash.toString('hex'),
 		sign: sign.toString('hex'),
 		pubk: pubKey.toString('hex'),
@@ -104,7 +109,7 @@ _.each(genesis.validators, function(v){
 });
 
 console.log('Validators accounts (TEST)');
-
+console.log('Store it PRIVACY');
 console.dir( _valPrivateKeys, {depth: 4, color:true} );
 
 //create some Initial acc for devs 
@@ -134,16 +139,15 @@ _.each(_devAccounts, function(p, v){
 	let ripemd160 = crypto.createHash('ripemd160');
 
 	//IDXT - GlobalCode, 01 - version (e.g. ate chain-id), TEST - codename of network
-	
-	let hash = ripemd160.update( Buffer.from(genesis.chain_id, 'utf8') ).update( sha256.update( pubKey.toString('hex') ).digest() ).digest();
+	let hash = ripemd160.update( sha256.update( pubKey.toString('hex') ).digest() ).digest();
 	
 	//native address of network
-	let address = bs58.encode( hash );
+	let address = genesisAppState.options.addressPrefix + bs58.encode( hash );
 	
 	_devAddr.push( address );
 
 	let acc = {
-		ids					:[address, v + '@indexprotocol.network', v + '@coinindex.agency', v + '@indexprotocol.ltd'], 
+		ids					:[v + '@coinindex.agency', v + '@indexprotocol.ltd'], 
 		name				: v + '@indexprotocol.network',		//main name, if associated		
 		address				: address,
 		createdBlockHeight	: 0,
@@ -163,6 +167,7 @@ _.each(_devAccounts, function(p, v){
 
 	//
 	genesisAppState.accounts.push({
+		addr: address,
 		hash: axHash.toString('hex'),
 		sign: sign.toString('hex'),
 		pubk: pubKey.toString('hex'),
@@ -209,6 +214,13 @@ console.log('\n\n');
 genesis.app_state = app_state;
 
 fs.writeFileSync( '../config/genesis.json', JSON.stringify( genesis ), {encoding: 'utf8'});
+
+/** only for test gen
+//create private key file for each validators 
+_.each(_valPrivateKeys, function(v){
+	fs.writeFileSync( v.name + '.validatorkey.json', JSON.stringify( v ), {encoding: 'utf8'});
+});
+**/
 
 console.log('Genesis.json successful rewritten!');
 console.log('To take effect: restart your indexapp.js with cleandb option');

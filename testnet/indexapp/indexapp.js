@@ -103,7 +103,11 @@ const stateDb 	= rocksdown( stateDbPath );
 const rocksOpt = {
 	createIfMissing: true,
 	errorIfExists: false,
-	compression: true,
+	compression: 1,  //'kSnappyCompression',
+	
+	//compression_per_level: 1, 
+	bottommost_compression: 5, //'kSnappyCompression',
+	//kSnappyCompression
 	
 	maxOpenFiles: 16384,	
 	target_file_size_base: 4 * 1024 * 1024,	
@@ -194,23 +198,18 @@ let indexProtocol = {
 			'previousAppHash' : '',
 						
 			//some of settings overall all chain
+			//Megre with Genesis.json data at initChain
 			'options'		: {
-				//'blockBeforeConfirmation' 	: 10, //how blocks we need to wait before
-				
 				'nativeSymbol'				: 'IDXT',  //tiker for native coin at this network
 				'initialNativeCoinBalance'	: 1000,
 				'defaultSystemAccount'		: 'testnet@indexprotocol.network',
 				
 				//full reward = rewardPerBlock + (rewardPerDataTx * DataTxCount) + SUMM(TxFee)
 				'rewardPerBlock'				: 1000, //reward to Validator for block (base value, for any tx at block)
-				'rewardPerDataTx'				: 10,
-				
-				//add all app options to appState
-				//'app'							: {}
+				'rewardPerDataTx'				: 10
 			},
 			
 			'dataSource': {},
-			
 			
 			'validatorStore':{}, //state of validators balances, emission of each block. Balances ONLY at nativeSymbol
 			
@@ -231,7 +230,7 @@ let indexProtocol = {
 			}, //symbols registry DB
 			
 			//simple accounts store, only address
-			'accountStore'	:	[ 'MCPqykgZUJPb72vC9kgPRC6vvZm' ] //user accounts
+			'accountStore'	:	[ ] //user accounts addresses
 		};
 	},
 	//'latestAvg'		: null,	//latest avg data	
@@ -862,14 +861,82 @@ let server = createServer({
 				appState.options = _.extend( appState.options, genesisAppState.options );
 			}
 			
+			appState.chainId = chainId;
 			
+			if (genesisAppState.assets){
+				
+				_.each(genesisAppState.assets, function(v){
+					appState.assetStore[ v.symbol ] = v;
+					
+					console.log('Initial appState: assets symbol ' + v.symbol + ' was registered');
+				});
 			
+			}
+			
+			if (genesisAppState.accounts){
+				
+				_.each(genesisAppState.accounts, function(v){
+					//@todo: check sign
+					let data = JSON.parse( Buffer.from(v.data, 'base64').toString('utf8') );
+					
+					if (data){
+						appState.accountStore.push( data.address );
+						
+						//save to global lookup tbl
+						//@todo: check it't uniques
+						saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.' + data.pubKey, value: data.address});
+						saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.' + data.address, value: data.pubKey});
+						saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.' + data.address, value: data.address}); //self to search with any field
+						
+						if (data.name !== data.address){
+							saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.' + data.name, value: data.address});
+						}
+						
+						if (data.ids.length > 0){
+							_.each(data.ids, function(i){
+								if (i && i !== data.address && i !== data.pubKey){
+									saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.' + i, value: data.address});
+								}
+							});
+						}
+						
+						//Save to systems accounts 
+						indexProtocol.accountsStore[ data.address ] = data;
+						
+						console.log('Initial appState: accounts with addresses ' + data.address + ' was registered');
+					}					
+				});
+				
+			}
+			
+			//parse initial allocation 
+			if (genesisAppState.initialAllocation){
+				_.each(genesisAppState.initialAllocation, function(v){
+					if (indexProtocol.accountsStore[ v.to ] && appState.assetStore[ v.symbol ]){
+						
+						indexProtocol.accountsStore[ v.to ].data.assets.push( {symbol: v.symbol, amount: v.amount} );
+						
+						console.log('Initial appState allocation: to ' + v.to + ', asset ' + v.symbol + ', amount ' + v.amount);
+					}
+					else {
+						//@todo: what to do with "unallocated address"
+					}
+				});
+			}
+			
+			//save accounts 
+			_.each(indexProtocol.accountsStore, function(v, i){
+				saveOps.push({type: 'put', key: 'tbl.accounts.' + v.address, value: JSON.stringify( v )});
+			});
+			
+			/**
 			
 			console.dir( genesisAppState, {depth: 16, color: true});
 		
 			console.log(' ');
 		
 			process.exit();
+			***/
 			
 		}
 		
