@@ -18,6 +18,14 @@ const fetch			= require('node-fetch');
 const http			= require('http');
 
 const MerkleTree 	= require('merkletreejs');
+const tendermintSocketPath = '/opt/tendermint/tendermint.socket';
+//clear old socket 
+if (fs.existsSync( tendermintSocketPath ) === true)
+	fs.unlinkSync( '/opt/tendermint/tendermint.socket' );
+
+const stateDbPath 	= '/opt/tendermint/app/db/state.db'; //stateDb
+const stateDb 	= rocksdown( stateDbPath );
+
 
 // returns Buffer
 function sha256(data) {
@@ -50,13 +58,7 @@ process.on('exit', (code) => {
 	}
 });
 
-//local config and state, NOT replicated or store to chain, but store locally
-const nodeState = {
-	latestCommitedCalcBlock	:	0, //latest block avg with commit
-};
-
 //test private key for system account
-const godKey = '178194397bd5290a6322c96ea2ff61b65af792397fa9d02ff21dedf13ee9bb33';
 const storeLatestBlocks = 300; //how many blocks decoded and stored
 const storeLatestAvgBlocks = 99; //how many blocks stored for check AVG tx.
 const maxDiffFromAppHeight = 30; // avg quote from proposer - how much difference
@@ -64,28 +66,37 @@ const maxDiffFromAppHeight = 30; // avg quote from proposer - how much differenc
 const fixedExponent = 1000000;
 let manualRevertOneBlock = false;
 
+let dbSyncThrottle = 1; //how many block per db dics sync
+let currentThrottleCounter = 0;
+
 var rpcHttpAgent = new http.Agent({
 	keepAlive: true,
 	timeout: 15000
 });
 
-const stateDbPath 	= '/opt/tendermint/app/db/state.db'; //stateDb
 
 	if (process.argv.indexOf('cleandb') != -1){
 		console.log('\n     *** WARNING ***     \n');
 		console.log('Destroy ALL data from application db. All data will be losted!');
 		console.log('Clearing app state...');
-			
-		let dir = fs.readdirSync( stateDbPath );
 		
-		_.each(dir, function(f){
-			console.log('remove file: ' + f + '... ok');
-			
-			fs.unlinkSync( stateDbPath + '/' + f);			
-		});
+		let dir = null;
 		
-		fs.rmdirSync( stateDbPath );
-						
+		try {
+			dir = fs.readdirSync( stateDbPath );
+			
+			_.each(dir, function(f){
+				console.log('remove file: ' + f + '... ok');
+				
+				fs.unlinkSync( stateDbPath + '/' + f);			
+			});
+			
+			//maybe not remove all
+			//fs.rmdirSync( stateDbPath );
+		}catch(e){
+			//already deleted?
+		}
+		
 		console.log('All app DB cleared and removed... OK\n\n');
 	}
 	
@@ -96,8 +107,22 @@ const stateDbPath 	= '/opt/tendermint/app/db/state.db'; //stateDb
 		manualRevertOneBlock = true;				
 	}
 	
-
-const stateDb 	= rocksdown( stateDbPath );
+	//save throttle
+	if (process.argv.indexOf('savesync') != -1){
+		console.log( 'INFO:  Manual save sync ');
+		
+		let _t = Math.abs( parseInt( process.argv[ process.argv.indexOf('savesync')+1 ] ) );
+		
+		if (_t > 100)
+			_t = 99;
+		
+		dbSyncThrottle = _t;				
+	}	
+	
+	
+	
+//Try to open private Key of node or create if no exists
+let nodePrivKey = null;
 
 //options for RocksDB
 const rocksOpt = {
@@ -106,12 +131,37 @@ const rocksOpt = {
 	compression: 1,  //'kSnappyCompression',
 	
 	//compression_per_level: 1, 
-	bottommost_compression: 5, //'kSnappyCompression',
+	bottommost_compression: 1, //'kSnappyCompression',
 	//kSnappyCompression
 	
-	maxOpenFiles: 16384,	
-	target_file_size_base: 4 * 1024 * 1024,	
-	maxFileSize : 64 * 1024 * 1024
+	maxOpenFiles: -1, //16384,	
+	target_file_size_base	: 256 * 1024 * 1024,	
+	maxFileSize 			: 256 * 1024 * 1024,
+	
+	max_background_compactions: 2,
+	max_background_flushes: 1,
+	
+	write_buffer_size: 64 * 1024 * 1024,	
+	max_write_buffer_number: 4,
+	min_write_buffer_number_to_merge: 2,
+	
+	level0_file_num_compaction_trigger	: 10,
+	level0_slowdown_writes_trigger		: 20,
+	level0_stop_writes_trigger			: 40,
+	
+	max_bytes_for_level_base: 512 * 1024 * 1024,
+	memtable_prefix_bloom_bits: 8 * 1024 * 1024,
+	
+	compression_size_percent: -1,
+	
+	optimize_filters_for_hits: true,
+	level_compaction_dynamic_level_bytes: true,
+	
+	block_cache: 512 * 1024 * 1024,
+	allow_os_buffer: true,
+	
+	block_size: 16 * 1024
+	
 };
 
 	stateDb.open(rocksOpt, function(err){
@@ -136,13 +186,6 @@ const rocksOpt = {
 	
 let currentBlockStore = []; //current unconfirmed block tx
 
-/**
-//temporary queue to avg confirmation
-let consensusConfirmation = {
-	queue: [],
-	state: {} //hash-map height: proof
-} **/
-
 //test version of lib
 let indexProtocol = {   
 	node:{
@@ -157,7 +200,8 @@ let indexProtocol = {
 		rpcHealth: false, //check if local rpc up
 	},
 	
-	accountsStore : { //local in-memory account storage 
+	accountsStore : {}, //local in-memory account storage 
+/**	
 		'MCPqykgZUJPb72vC9kgPRC6vvZm' : {
 			ids					:['MCPqykgZUJPb72vC9kgPRC6vvZm', 'token@indexprotocol.network', 'token@indexprotocol.online','indx.coin@indexprotocol.network'], 	//array of any string-based ids (global uniq!) associate with account
 			name				: 'token@indexprotocol.network',		//main name, if associated		
@@ -176,7 +220,7 @@ let indexProtocol = {
 			pubKey				: '04145da5f0ec89ffd9c8e47758e922d26b472d9e81327e16e649ab78f5ab259977756ceb5338dd0eddcff8633043b53b25b877b79f28f1d70f9b837ffaca315179'
 		}
 	}, 
-	
+**/	
 	//@todo: maybe store it at rocksDb? 
 	//local storage of latest uncomitted avg quotes
 	//store latest N 
@@ -260,6 +304,73 @@ let indexProtocol = {
 				indexProtocol.node.address = privVal.address.toLowerCase();
 			
 			console.log('My validator\'s address: ' + indexProtocol.node.address);
+			
+			try {
+				nodePrivKey = fs.readFileSync('./account.json', {encoding: 'utf8'});
+			}catch(e){
+				console.log('Error while read account file: ' + e.message);
+			}
+
+			if (nodePrivKey){
+				nodePrivKey = JSON.parse( nodePrivKey );
+				
+				if (nodePrivKey && nodePrivKey.address && nodePrivKey.privKey){
+					//getting pubKey
+					let 	_ecdh = crypto.createECDH('secp256k1');
+							_ecdh.setPrivateKey( Buffer.from(nodePrivKey.privKey, 'hex') );
+
+					nodePrivKey.pubKey = _ecdh.getPublicKey('hex');
+				}
+			}
+
+			if (!nodePrivKey){
+				console.log('***** WARNING! No account key (file: .account.json) *****');
+				console.log('New account key (private key) will be created and store');
+
+				let 	_ecdh = crypto.createECDH('secp256k1');
+						_ecdh.generateKeys();
+					
+				let privKey = _ecdh.getPrivateKey();
+				let pubKey 	= _ecdh.getPublicKey();
+				
+				let hash = crypto.createHash('ripemd160').update( crypto.createHash('sha256').update( pubKey.toString('hex') ).digest() ).digest(); // .digest('hex');
+
+				let address = 'indxt' + bs58.encode( hash );
+				
+				nodePrivKey = {
+					address 	: address, 
+					taddress 	: indexProtocol.node.address, 
+					name		: address, 
+					privKey		: privKey.toString('hex'), 
+					pubKey		: pubKey.toString('hex'),
+					
+					generate	: 'auto',
+					genDate		: moment().toISOString()
+				};
+				
+				fs.writeFileSync( 'account.json', JSON.stringify( nodePrivKey ), {encoding: 'utf8'});
+				
+				console.log('Stored at ./account.json');
+				console.dir( nodePrivKey, {depth: 2, colors: true});	
+				console.log('IMPORTANT: Keep save this data. Do NOT share it!');
+			}	
+
+			if (!nodePrivKey || !nodePrivKey.address || !nodePrivKey.privKey || !nodePrivKey.pubKey){
+				console.log('Invalid account key. Not possible to work without account key file');
+				process.exit(0);
+			}
+			else {
+				console.log('    ');
+				console.log('Account address: ' + nodePrivKey.address);
+				console.log('Account pubKey: ' + nodePrivKey.pubKey);
+				console.log('    ');
+				console.log('    ');
+			}
+			
+			
+			
+			
+			
 		}
 		else {
 			console.log('ERROR: Can\'t load file priv_validator_key.json from ' + indexProtocol.node.configDir);
@@ -413,7 +524,7 @@ let indexProtocol = {
 	startAbciServer: function(){
 		console.log('ABCI Server starting...');
 
-		server.listen(26658, function(){
+		server.listen('/opt/tendermint/tendermint.socket'/*26658*/, function(){
 			console.log('ABCI server started OK');
 			
 			//run periodical check local RPC 
@@ -435,6 +546,8 @@ let indexProtocol = {
 			}, 1000);
 			
 			events.emit('AbciServerStarted');
+			
+			
 		}).on('error', function(e){
 			console.debug( e );
 		}).on('close', function(e){
@@ -868,6 +981,8 @@ let server = createServer({
 				_.each(genesisAppState.assets, function(v){
 					appState.assetStore[ v.symbol ] = v;
 					
+					saveOps.push({type: 'put', key: 'tbl.assets.' + v.symbol.toUpperCase(), value: JSON.stringify(v)});
+					
 					console.log('Initial appState: assets symbol ' + v.symbol + ' was registered');
 				});
 			
@@ -900,6 +1015,11 @@ let server = createServer({
 							});
 						}
 						
+						if (data.data.assets.length == 0){
+							//fix native currency balance 
+							data.data.assets.push({symbol: appState.options.nativeSymbol, amount: 0});
+						}
+						
 						//Save to systems accounts 
 						indexProtocol.accountsStore[ data.address ] = data;
 						
@@ -929,6 +1049,11 @@ let server = createServer({
 				saveOps.push({type: 'put', key: 'tbl.accounts.' + v.address, value: JSON.stringify( v )});
 			});
 			
+			console.log(' ');
+			console.log('Processing genesis OK');
+			console.log(' ');
+			console.log(' ');
+			console.log(' ');
 			/**
 			
 			console.dir( genesisAppState, {depth: 16, color: true});
@@ -948,19 +1073,27 @@ let server = createServer({
   
 	info: function(request) {
 		console.log('INFO request called');
-		console.debug( request );
+		console.dir( request, {depth:4} );
 		
 		//@todo optimize it
+		//@todo: open question - how to upgrade network node?
 		stateDb.put('appVersion', appState.appVersion, function(err){});
 		stateDb.put('version', appState.version, function(err){});
-
-		return {
-			data: 'Node.js INDEX Protocol app',
+		
+		let responce = {
+			data: 'INDEXProtocol App#Testnet-01',
+			
 			version: appState.version, 
 			appVersion: appState.appVersion,
+			
 			lastBlockHeight: appState.blockHeight 
 			//lastBlockAppHash: appState.appHash  //now disable for debug
-		}; 
+		};
+		
+		//console.log('Restored from DB latest snapshot');
+		//console.dir( [appState.version, appState.appVersion, appState.blockHeight], {depth:4} );
+
+		return  responce;
 	}, 
   
 	setOption: function(request){
@@ -1002,7 +1135,7 @@ let server = createServer({
 				let ripemd160 = crypto.createHash('ripemd160');
 				let hash = ripemd160.update( sha256( pubKey.toString('hex') ) ).digest(); // .digest('hex');
 
-					address = bs58.encode( hash );
+					address = appState.options.addressPrefix + bs58.encode( hash );
 					
 				//simple check 
 				if (appState.accountStore[ address ])
@@ -1063,7 +1196,7 @@ let server = createServer({
 					}).on('error', (e) => {
 					  console.error(`Got error: ${e.message}`);
 					  
-					  return reject({code: 1, value: Buffer.from(e.message, 'utf8').toString('base64')});
+					  return resolve({code: 1, value: Buffer.from(e.message, 'utf8').toString('base64')});
 					});
 					
 				});
@@ -1109,8 +1242,7 @@ let server = createServer({
 								console.log('ERROR: No commited and NO local AVG fro height: ' + _height);
 							}
 							
-							return reject( {code:0} );
-						
+							return resolve( {code:1} );
 						}
 					});
 					
@@ -1139,7 +1271,7 @@ let server = createServer({
 							return resolve( {code: 0, value: Buffer.from(val, 'utf8').toString('base64')} );
 						}
 						else
-							return reject( {code:1} );
+							return resolve( {code:1} );
 					});
 					
 				});				
@@ -1161,7 +1293,7 @@ let server = createServer({
 							return resolve( {code: 0, value: Buffer.from(val, 'utf8').toString('base64')} );
 						}
 						else
-							return reject( {code:1} );
+							return resolve( {code:1} );
 					});
 					
 				});				
@@ -1171,10 +1303,31 @@ let server = createServer({
 				let maxCountAddr = 1000; //maximum of addresses
 				let _res = [];
 				
-				console.dir( indexProtocol.accountsStore, {depth: 16});
-				
 				_.each(indexProtocol.accountsStore, function(v, addr){
 					if (_res.length > maxCountAddr) return;
+					
+					let _amount = 0;
+					
+					//find balance at IDXT 
+					if (v.data.assets.length > 0){
+						let obj = _.find(v.data.assets, function(bal){
+							
+							//console.log( [bal, bal.symbol, appState.options.nativeSymbol, (bal.symbol == appState.options.nativeSymbol)]  );
+							
+							if (bal.symbol == appState.options.nativeSymbol)
+								return true;
+						});
+					
+						if (obj && obj.amount){
+							_amount = parseInt( obj.amount );
+							
+							let dvd = appState.assetStore[ appState.options.nativeSymbol ].divider;
+							
+							if (dvd > 1){
+								_amount = Number(_amount / dvd).toFixed(2);
+							}
+						}
+					}
 					
 					_res.push({
 						address	:	v.address,
@@ -1182,23 +1335,31 @@ let server = createServer({
 						height	:	v.createdBlockHeight,
 						type	:	v.type,
 						nonce	: 	v.nonce,
-						balance :	0, //@todo balance of native coin
-						pubKey	: 	v.pubKey
+						balance :	_amount, //balance of native coin
+						pubKey	: 	v.pubKey,
+						
+						_ts		: new Date().getTime()
 					});
 					
 				});
 	
 				return {code: 0, value: Buffer.from(JSON.stringify( _res ), 'utf8').toString('base64')};
 			}
-			
-			
-			
-			/**
-			{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: stringify(appState.blockStore[0])}
-			 **/
-			
+			else
+			if (path === 'tbl.assets.all'){
+				let maxCountAssets = 1000; //maximum of asset
+				let _res = [];
+				
+				_.each(appState.assetStore, function(v){
+					if (_res.length > maxCountAssets) return;
+					
+					_res.push( v );
+					
+				});
+	
+				return {code: 0, value: Buffer.from(JSON.stringify( _res ), 'utf8').toString('base64')};
+			}
 		}
-		
 		
 		return { code: 1 };
 	},
@@ -1245,7 +1406,7 @@ let server = createServer({
 				break;
 			}
 			case 'AVG': {
-				console.log('AVG: CheckTx Rates');
+				//console.log('AVG: CheckTx Rates');
 			
 				//@todo: rewrite structure as: hash:sign:pubkey:flags:data
 				//check signature 
@@ -1286,6 +1447,8 @@ let server = createServer({
 					return { code: 0 };
 				}
 				
+				
+				/**
 				console.log(' ');
 				console.log('WARN: need a Fuzzy check, we not eq with hash');
 				console.log(' ');
@@ -1296,15 +1459,15 @@ let server = createServer({
 				console.log('Data from local copy');
 				console.dir( localCopy, {depth:1});
 				console.log(' ');
-				
+				**/
 				
 				//@todo: use deep Fuzzy check, every field and scoring system to check eq						
 				//check MerkleRoot 
-				/*
+				
 				if (data.txMerkleRoot == localCopy.data.txMerkleRoot){
 					return { code: 0 };
 				}
-				*/
+				
 								
 				break;
 			}
@@ -1326,7 +1489,8 @@ let server = createServer({
 				//simple check pubkey at local storage 
 				return new Promise(function(resolve, reject){
 					//lookup table pubkey to address
-					stateDb.get('tbl.accounts.__lookup.pubkeys.' + pubKey, function(err, val){
+					//@todo: need to check all ids, name and use forbidden ids 
+					stateDb.get('tbl.accounts.__lookup.' + pubKey, function(err, val){
 						console.log('Check avalability of pubKey at lookup tbl.');
 					
 						if (!err && val){
@@ -1337,7 +1501,7 @@ let server = createServer({
 							if (val && val != ''){
 								console.log('Address already exists');
 								
-								return reject({code: 1, log: 'Address already exists'});
+								return resolve({code: 1, log: 'Address already exists'});
 							}
 							
 							return resolve( {code: 0} );
@@ -1360,6 +1524,7 @@ let server = createServer({
 	},
 
 	deliverTx: function(request) {
+try {
 		//console.log('Call: DeliverTx');    
 		let tx = request.tx.toString('utf8'); //'base64'); //Buffer 
 		
@@ -1375,6 +1540,7 @@ let server = createServer({
 		switch ( txType ){
 			
 			case 'CET': {
+
 				let _x = Buffer.from( z[1], 'base64').toString('utf8');
 				
 				tags[ 'tx.class' ] = 'cetx';
@@ -1406,7 +1572,7 @@ let server = createServer({
 					}
 					//	return { code: 1, log: 'CET: RightBTC Exchange is blocked!' };
 					
-					
+					/*
 					tags[ 'asset' ] = x.asset.toUpperCase();
 					tags[ 'cur' ] = x.cur.toUpperCase();
 					tags[ 'tx.symbol' ] = x.symbol.toUpperCase();
@@ -1428,7 +1594,7 @@ let server = createServer({
 					
 					tags[ 'tx.hour' ] = _ts.format('HH');
 					tags[ 'tx.time' ] = _ts.format('HH:mm');
-					
+					*/
 					delete x._hash;
 
 					currentBlockStore.push( x );
@@ -1436,16 +1602,16 @@ let server = createServer({
 				
 				
 				// //ztag.push({'key': 'tx.year', 'value' : '2019'});
-				let ztag = [];
-					ztag.push({key: 'year', value : '2019'}); 
-					ztag.push({key: 'zear', value : 'test'}); 
+				//let ztag = [];
+				//	ztag.push({key: 'year', value : '2019'}); 
+				//	ztag.push({key: 'zear', value : 'test'}); 
 				
-				return { code: 0, tags: ztag }; 
+				return { code: 0 }; 
 				
 				break;   
 			}			
 			case 'AVG': {
-				console.log('AVG: DeliverTx with average calc Rates');
+				//console.log('AVG: DeliverTx with average calc Rates');
 				
 				//@possinle optimize - do now double parse
 				let data = JSON.parse( Buffer.from( z[(z.length-1)], 'base64').toString('utf8') );
@@ -1459,7 +1625,9 @@ let server = createServer({
 					
 					console.log('AVG: Calc Rates commited for height ' + data.blockHeight + ' (diff: ' + (appState.blockHeight - data.blockHeight) + ')');
 				}
-							
+			
+				return { code: 0 }; 
+						
 				break;
 			}
 			
@@ -1499,14 +1667,20 @@ let server = createServer({
 						return { code: 1, log: 'Invalid or empty address' };
 					}
 					
+					//fix to older addresses, without prefix 
+					if (data.address.indexOf(appState.options.addressPrefix) !== 0){
+						return { code: 1, log: 'Address at old format, invalid' };
+					}
+					
 					data.createdBlockHeight = appState.blockHeight;
 					data.updatedBlockHeight = appState.blockHeight;
 					
 					appState.accountStore.push( data.address );
 					
 					//Save to systems accounts 
-					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.pubkeys.'+pubk, value: data.address});
-					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.address.'+data.address, value: pubk});
+					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.'+pubk, value: data.address});
+					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.'+data.address, value: pubk});
+					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.'+data.address, value: data.address});
 					saveOps.push({type: 'put', key: 'tbl.accounts.'+data.address, value:JSON.stringify( data )});
 					
 					indexProtocol.accountsStore[ data.address ] = data;
@@ -1521,78 +1695,22 @@ let server = createServer({
 				break;
 			}
 			
-			//Transfer active from one address to another address
-			//REPLACE TO NEWWW
-			case 'TRA' : {
-				let _x = Buffer.from( z[1], 'base64').toString('utf8');
-				var x = JSON.parse( _x );
-				
-				if (x){
-					//1. check all required fields 
-					//2. exclude signature, replace it to ''
-					//3. Verify signature 
-					//4. if OK, check account present at state.accountStore. If Ok = wrong tx 
-					//5. check system nslookup tbl for name. If Ok - wrong tx 
-					//6. If OK - add to action queue (real create will be delegated to block commit)
-					
-					/*
-						{
-							exec: 'tbl.tx.transfer',	//ns of actions
-							base: address,
-							toad: address, //or name or one of altnames registered by chain
-							//pubk: pubKey.toString('hex'), //from pubkey
-							symb: 'IDXT', // if empty, null or 0 = IDXT or any default type of coin, or registered symbols
-							amnt: 10000, //amount of tx, including tfee, (always integer, used fixedExponent), min is 1
-							tfee: 1, // standart fee (or any other, todo)
-							data: '', //up to 256 bytes any user data 
-							nonc: 1, 
-							sign: '' //signature from privateKey of from address
-						}
-					*/
-					
-					console.debug( x );
-					
-					//@todo: more complex check each fileds
-					if (x.exec == 'tbl.tx.transfer' && x.base && x.toad && x.amnt && x.nonc > 0 && x.sign){
-						
-						let sign = x.sign;
-							x.sign = '';
-						
-						//find pubKey from associated acc 
-						let pubKey = indexProtocol.pubKeyFrom( x.base );
-						
-						if (!pubKey || pubKey === false)
-							return { code: 0, log: 'Wrong account' };
-						
-						let sha256 = crypto.createHash('sha256');						
-						let xHash = sha256.update( Buffer.from( stringify( x ), 'utf8') ).digest();
-						
-						let vRes = secp256k1.verify(xHash, Buffer.from(sign, 'hex'), Buffer.from(pubKey, 'hex'));
-
-						if (vRes == true){
-							//sign OK 
-							
-							delayedTaskQueue.push( x ); //do this at the commit of block
-							
-							return { code: 0 };
-						}
-						
-					}					
-				}
-				
-				//DEBUG
-				return { code: 0, log: 'Invalid tx format' };
-				
-				break;
-			}
-			
-			
-			
 			default: {	//DEBUG
 				return { code: 0, log: 'Unknown tx type' };
 			}
 		}
 
+		
+}catch(e){
+	console.log('Erroro while deliverTx app handler');
+	console.dir( e, {depth:16, colors: true});
+	
+	return { code: 0 };
+}					
+finally {
+	return { code: 0 }; 	
+}		
+		
 		//let number = tx.readUInt32BE(0)
 		//if (number !== state.count) {
 		//  return { code: 1, log: 'tx does not match count' }
@@ -1613,19 +1731,24 @@ let server = createServer({
 		currentBlockStore = [];
 		
 		
-//console.dir( request, {depth:64, colors: true} );
+//	console.dir( request.header.time, {depth:8, colors: true} );
 		
-		//block time
-		appState.blockTime = parseInt( request.header.time.seconds ); 
+		//block time - UTC
+		appState.blockTime = parseInt( request.header.time.seconds + '' + Math.trunc(request.header.time.nanos/1000000) ); 
+		
+//console.dir( appState.blockTime, {depth:8, colors: true} );
 		
 		//console.log( request.header.height + ' block proposerAddress: ' + request.header.proposerAddress.toString('hex') ); 
 		appState.blockHash = request.hash.toString('hex');
 		appState.blockProposer = request.header.proposerAddress.toString('hex').toLowerCase();
 		appState.blockHeight = parseInt( request.header.height.toString() );
 		
-		console.log('Call: BeginBlock. Height: ' + request.header.height + ', proposer: ' + appState.blockProposer + ', me: ' + (appState.blockProposer == indexProtocol.node.address));  
+		//console.log('      BeginBlock.Height: ' + request.header.height + ' at time '+moment.utc(appState.blockTime).format('HH:mm:ss DD/MM/YYYY')+', proposer: ' + appState.blockProposer + ', me: ' + (appState.blockProposer == indexProtocol.node.address));  
 		
 		let numTx = parseInt( request.header.numTxs.toString() );
+		
+		/** rewrite Reward/Mining sheme 
+		
 		let rewardFull = appState.options.rewardPerBlock + ( appState.options.rewardPerDataTx * numTx);
 			
 			//save to special system tbl 
@@ -1640,7 +1763,8 @@ let server = createServer({
 				
 				blockHeight: appState.blockHeight
 			});
-	
+		**/
+		
 		return { code: 0 };
 	},
   
@@ -1738,8 +1862,8 @@ let server = createServer({
 
 	//Commit msg for each block.
 	commit: function(){
-		try {
-		
+try {
+		const time = process.hrtime();
 		//events.emit('blockCommit', appState.blockHeight);
 		if (delayedTaskQueue.length > 0){
 			indexProtocol.processDelayedTask( appState.blockHeight ); //
@@ -1752,118 +1876,101 @@ let server = createServer({
 		endBlockTs = process.hrtime( beginBlockTs ); 
 
 		if (appState.appHash == ''){
-			const time = process.hrtime();
-			
+						
 			//create full string
 			let jsonAppState = JSON.stringify( appState );//stringify
 			
 			//calc actual hash
 			appState.appHash = indexProtocol.calcHash( jsonAppState, false);
 			
-			const diff = process.hrtime(time);	
-			const time2 = process.hrtime();
+			saveOps.unshift({ type: 'put', key: 'appHash', 		value: appState.appHash });
+			saveOps.unshift({ type: 'put', key: 'blockHeight', 	value: appState.blockHeight });
+			saveOps.unshift({ type: 'put', key: 'appState', 	value: jsonAppState });
+			saveOps.unshift({ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: JSON.stringify(indexProtocol.lastAvg) });
 			
+			/**
 			let ops = [
-				{ type: 'put', key: 'appHash', value: appState.appHash },
-				{ type: 'put', key: 'blockHeight', value: appState.blockHeight },
-				
-				{ type: 'put', key: 'appState', value: jsonAppState },
+				,
+				,
+				,
 				//{ type: 'put', key: 'tbl.system.lastavg', value: JSON.stringify( indexProtocol.lastAvg ) }, 
-				/** @todo: more db size 
+				// @todo: more db size 
 				//save state history to fast revert 
-				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.appstate', value: appState.appHash + '::' + jsonAppState },
-				**/
-				{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: JSON.stringify(indexProtocol.lastAvg) }
+				//{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.appstate', value: appState.appHash + '::' + jsonAppState },
 				//TEST{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: JSON.stringify(appState.blockStore[0])}
 			];
 			
 			if (saveOps.length > 0){
 				ops = ops.concat( saveOps );
-			}   
+			}
+			**/
 			
-			//save confirmations queue and state 
-			//ops.push({type: 'put', key: 'tbl.confirmation', value: JSON.stringify( consensusConfirmation )});
+			const diff = process.hrtime(time);	
+			const time2 = process.hrtime();
+			const diff2 = process.hrtime(time2);
+						
+			//if I Proposer - lets send Tx 
+			if (indexProtocol.isProposer(appState.blockProposer, appState.blockHeight) == true && indexProtocol.node.rpcHealth === true){
+							
+				const t1 = process.hrtime();
+				const tx = indexProtocol.prepareCalculatedRateTx( indexProtocol.lastAvg );
+
+				if (tx){
+					http.get(indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime(), {agent:rpcHttpAgent}, 	function(resp){
+						const tdiff = process.hrtime(t1);
+									
+						console.log('http responce code: ' + resp.statusCode + ' with time: ' + tdiff);
+					}).on('error', (e) => {
+					  console.error(`Got error: ${e.message}`);
+					});
+				}
+				else {
+					console.log('ERROR while building tx');
+					process.exit(1);	
+				}
+			}
 			
-			return new Promise(function(resolve, reject){
-				stateDb.batch(ops, function (err){
-					if (!err){
-						saveOps = []; //reset all planned writes to main db
+			currentThrottleCounter++; 
+			
+			if (currentThrottleCounter === dbSyncThrottle){
+				
+				return new Promise(function(resolve, reject){
+					stateDb.batch(saveOps, function (err){
+						if (!err){
+							let so = saveOps.length; 
+							saveOps = []; //reset all planned writes to main db
+							currentThrottleCounter = 0;
+											
+							console.log( appState.blockHeight + ' block, dTx: ' + appState.blockStore[0].tx.length + ', time: ' +moment.utc(appState.blockTime).format('HH:mm:ss DD/MM/YYYY')+', proposer: ' + appState.blockProposer + ' (me: ' + (appState.blockProposer == indexProtocol.node.address) + '), save to disc ('+so+' op) - OK. (commit: '+prettyHrtime(diff)+', s: '+prettyHrtime(diff2)+/*', tx_async: '+prettyHrtime(tdiff)+*/', b: '+ prettyHrtime(endBlockTs)+')');
 						
-						const diff2 = process.hrtime(time2);
-//console.log('RPC Health: ' + indexProtocol.node.rpcHealth);						
-						//if I Proposer - lets send Tx 
-						if (indexProtocol.isProposer(appState.blockProposer, appState.blockHeight) == true && indexProtocol.node.rpcHealth === true){
-							
-							const t1 = process.hrtime();
-							const tx = indexProtocol.prepareCalculatedRateTx( indexProtocol.lastAvg );
-//console.log( indexProtocol.lastAvg );
-//console.log( tx );							
-							if (tx){
-								
-								http.get(indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime(), {agent:rpcHttpAgent}, function(resp){
-									const tdiff = process.hrtime(t1);
-									
-									console.log('http responce code: ' + resp.statusCode + ' with time: ' + tdiff);
-									//console.dir( resp, {depth: 16} );
-									
-									
-								}).on('error', (e) => {
-								  console.error(`Got error: ${e.message}`);
-								});
-								
-								console.log( appState.blockHeight + ' block, data tx: ' + appState.blockStore[0].tx.length + ', appState hash: ' + appState.appHash + ', save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+/*', tx_async: '+prettyHrtime(tdiff)+*/', block: '+ prettyHrtime(endBlockTs)+')');
-						
-								return resolve( {code: 0} );
-								
-								
-								/**
-								
-								fetch(indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime()).then(function(rq){
-	console.log( rq );								
-									const tdiff = process.hrtime(t1);
-									
-									console.log( appState.blockHeight + ' block, data tx: ' + appState.blockStore[0].tx.length + ', appState hash: ' + appState.appHash + ', save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', tx_async: '+prettyHrtime(tdiff)+', block: '+ prettyHrtime(endBlockTs)+')');
-						
-									return resolve( {code: 0} );										
-									
-								}).catch(function(err){ console.error(err);  return reject( {code:1} ); });
-								
-								**/
-							}
-							else {
-								console.log('ERROR while building tx');
-								process.exit(1);	
-							}
-							
-						}
-						else {					
-						
-							console.log( appState.blockHeight + ' block, data tx: ' + appState.blockStore[0].tx.length + ', appState hash: ' + appState.appHash + ', save OK to disc (calc: '+prettyHrtime(diff)+', save: '+prettyHrtime(diff2)+', block: '+ prettyHrtime(endBlockTs)+')');
-							
 							return resolve( {code: 0} );
 						}
-					}
-					else {
-						console.log('ERROR while save state to DB');
-						process.exit(1);	
+						else {
+							console.log('ERROR while save state to DB');
+							process.exit(1);	
 
-						return reject( {code:1} );
-					}
-				});
-			});
-		}
+							return reject( {code:1} );
+						}
+					});
+				});			
+			}
+			
+			console.log( appState.blockHeight + ' block, dTx: ' + appState.blockStore[0].tx.length + ', time: ' +moment.utc(appState.blockTime).format('HH:mm:ss DD/MM/YYYY')+', proposer: ' + appState.blockProposer + ' (me: ' + (appState.blockProposer == indexProtocol.node.address) + '), save queue '+saveOps.length+' ops., (commit: '+prettyHrtime(diff)+', s: '+prettyHrtime(diff2)+', b: '+ prettyHrtime(endBlockTs)+')');
 
 		// Buffer.from(appState.appHash, 'hex')
-		//return { code: 0 }
-		
-		}catch(e){
-			console.log( e );
-			
-			console.log('ERROR while save state to DB');
-			process.exit(1);	
-			
-			return { code: 1 }
+			return { code: 0 }
 		}
+		else 
+			process.exit(42);
+		
+}catch(e){
+	console.log( e );
+	
+	console.log('ERROR while save state to DB');
+	process.exit(1);	
+	 
+	return { code: 1 }    
+}
 	} 
 
 });
@@ -1881,6 +1988,7 @@ setInterval(function(){
 	
 }, 60000);
 **/
+
 
 //Quick fix for RocksDB/LevelDOWN, no set option to delete OLD.log.ХХХХ files
 setInterval(function(){
@@ -1937,6 +2045,8 @@ setInterval(function(){
 }, 1 * 60 * 1000); 
 **/
 
+
+//
 
 //===
 

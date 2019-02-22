@@ -3,6 +3,7 @@ const bs58				= require('bs58');
 const secp256k1			= require('secp256k1');
 const _					= require('underscore');
 const fs				= require('fs');
+const moment			= require('moment');
 
 console.log("\n");
 console.log('INDEXProtocol testnet Genesis.json generator tools');
@@ -97,7 +98,7 @@ _.each(genesis.validators, function(v){
 	/*
 	genesisAppState.validatorsKeys.push({ 'address' : tAddr, 'name' : tName, 'privKey' : privKey.toString('hex') });
 	*/
-	_valPrivateKeys.push({ 'address' : address, 'taddress' : tAddr, 'name' : tName, 'privKey' : privKey.toString('hex') });
+	_valPrivateKeys.push({ 'address' : address, 'taddress' : tAddr, 'name' : tName, 'privKey' : privKey.toString('hex'), pubKey: pubKey.toString('hex'), generate: 'genesis', genDate: moment().toISOString()  });
 	
 	genesisAppState.accounts.push({
 		addr: address,
@@ -215,12 +216,12 @@ genesis.app_state = app_state;
 
 fs.writeFileSync( '../config/genesis.json', JSON.stringify( genesis ), {encoding: 'utf8'});
 
-/** only for test gen
+/** only for test gen **/
 //create private key file for each validators 
 _.each(_valPrivateKeys, function(v){
-	fs.writeFileSync( v.name + '.validatorkey.json', JSON.stringify( v ), {encoding: 'utf8'});
+	fs.writeFileSync( v.name + '.account.json', JSON.stringify( v ), {encoding: 'utf8'});
 });
-**/
+
 
 console.log('Genesis.json successful rewritten!');
 console.log('To take effect: restart your indexapp.js with cleandb option');
