@@ -66,7 +66,7 @@ const maxDiffFromAppHeight = 30; // avg quote from proposer - how much differenc
 const fixedExponent = 1000000;
 let manualRevertOneBlock = false;
 
-let dbSyncThrottle = 1; //how many block per db dics sync
+let dbSyncThrottle = 20; //how many block per db dics sync
 let currentThrottleCounter = 0;
 
 var rpcHttpAgent = new http.Agent({
@@ -114,7 +114,7 @@ var rpcHttpAgent = new http.Agent({
 		let _t = Math.abs( parseInt( process.argv[ process.argv.indexOf('savesync')+1 ] ) );
 		
 		if (_t > 100)
-			_t = 99;
+			_t = 20;
 		
 		dbSyncThrottle = _t;				
 	}	
@@ -227,6 +227,8 @@ let indexProtocol = {
 	latestAvgStore:[],  //{height: height, hash: hash,  symbol: calcAvg.symbol, data: calcAvg}
 		
 	curTime: new Date().getTime(), //global time, updated every new block (at begin block)
+	
+	
 	getDefaultState: function(){
 		return {
 			'version'		: 'indx-testnet-01',
@@ -243,15 +245,7 @@ let indexProtocol = {
 						
 			//some of settings overall all chain
 			//Megre with Genesis.json data at initChain
-			'options'		: {
-				'nativeSymbol'				: 'IDXT',  //tiker for native coin at this network
-				'initialNativeCoinBalance'	: 1000,
-				'defaultSystemAccount'		: 'testnet@indexprotocol.network',
-				
-				//full reward = rewardPerBlock + (rewardPerDataTx * DataTxCount) + SUMM(TxFee)
-				'rewardPerBlock'				: 1000, //reward to Validator for block (base value, for any tx at block)
-				'rewardPerDataTx'				: 10
-			},
+			'options'		: {},
 			
 			'dataSource': {},
 			
@@ -259,19 +253,7 @@ let indexProtocol = {
 			
 			// !!!!!!!!!!! prototype 
 			//@todo: replace as user storages
-			'assetStore'	:	{
-				'IDXT': {
-					emissionBlockHeight	: 1,
-					initial				: 9007199254740991,
-					type				: 'coin', //coin for native coin, token for user assets, contract - for derivative contracts
-					divider				: 1000,
-					maxSupply			: 9007199254740991,
-					emission			: 0, //emission per block
-					owner				: 'MCPqykgZUJPb72vC9kgPRC6vvZm', //address of emitent
-										
-					tx: []
-				}
-			}, //symbols registry DB
+			'assetStore'	:	{}, //symbols registry DB
 			
 			//simple accounts store, only address
 			'accountStore'	:	[ ] //user accounts addresses
@@ -513,7 +495,7 @@ let indexProtocol = {
 			data = '';
 		
 		let hash = crypto.createHash('sha256');
-			hash.update( /*JSON.stringify(appState)*/ data, 'utf8' );
+			hash.update( /*JSON.stringify(appState)*/ data );
 		
 		if (returnRaw === true)
 			return hash;
@@ -965,14 +947,16 @@ let server = createServer({
 
 		//process app_state 
 		if (request.appStateBytes.length > 1){
-			
-			let aBuf = Buffer.from(request.appStateBytes.toString('utf8'), 'base64').toString('utf8');
-			let genesisAppState = JSON.parse( aBuf );
+
+			let genesisAppState = JSON.parse( Buffer.from(request.appStateBytes.toString('utf8'), 'base64').toString('utf8') );
 			
 			//assign options 
 			if (genesisAppState.options){
 				appState.options = _.extend( appState.options, genesisAppState.options );
 			}
+			
+//console.dir( appState.options, {depth: 16, color: true});
+//process.exit(1);
 			
 			appState.chainId = chainId;
 			
@@ -1034,7 +1018,13 @@ let server = createServer({
 				_.each(genesisAppState.initialAllocation, function(v){
 					if (indexProtocol.accountsStore[ v.to ] && appState.assetStore[ v.symbol ]){
 						
-						indexProtocol.accountsStore[ v.to ].data.assets.push( {symbol: v.symbol, amount: v.amount} );
+						let t = _.find( indexProtocol.accountsStore[ v.to ].data.assets, function(z){ if (z.symbol === v.symbol) return true; });
+						
+						if (t){
+							t.amount = t.amount + v.amount;
+						}
+						else
+							indexProtocol.accountsStore[ v.to ].data.assets.push( {symbol: v.symbol, amount: v.amount} );
 						
 						console.log('Initial appState allocation: to ' + v.to + ', asset ' + v.symbol + ', amount ' + v.amount);
 					}
@@ -1299,16 +1289,20 @@ let server = createServer({
 				});				
 			}
 			else
-			if (path === 'getallaccounts'){
+			if (path === 'tbl.accounts.all'){
 				let maxCountAddr = 1000; //maximum of addresses
 				let _res = [];
+				
+				console.log( appState.options.nativeSymbol );
 				
 				_.each(indexProtocol.accountsStore, function(v, addr){
 					if (_res.length > maxCountAddr) return;
 					
 					let _amount = 0;
 					
-					//find balance at IDXT 
+//console.dir( v.data.assets, {depth:2} );
+					
+					//find balance at IDX
 					if (v.data.assets.length > 0){
 						let obj = _.find(v.data.assets, function(bal){
 							
@@ -1524,9 +1518,10 @@ let server = createServer({
 	},
 
 	deliverTx: function(request) {
-try {
+//try {
 		//console.log('Call: DeliverTx');    
-		let tx = request.tx.toString('utf8'); //'base64'); //Buffer 
+		//let txHash 	= crypto.createHash('sha256').update(request.tx).digest('hex');
+		let tx 		= request.tx.toString('utf8'); //'base64'); //Buffer 
 		
 		//updated format: code:hash:sign:pubkey:flags:data
 		let z  = tx.split(':'); //format: CODE:<base64 transaction body>
@@ -1700,7 +1695,7 @@ try {
 			}
 		}
 
-		
+/*		
 }catch(e){
 	console.log('Erroro while deliverTx app handler');
 	console.dir( e, {depth:16, colors: true});
@@ -1710,7 +1705,7 @@ try {
 finally {
 	return { code: 0 }; 	
 }		
-		
+*/		
 		//let number = tx.readUInt32BE(0)
 		//if (number !== state.count) {
 		//  return { code: 1, log: 'tx does not match count' }
@@ -1862,107 +1857,130 @@ finally {
 
 	//Commit msg for each block.
 	commit: function(){
-try {
-		const time = process.hrtime();
+//try {
+const time = process.hrtime();
+const t1 = process.hrtime();
+		let delayTasks = delayedTaskQueue.length;
 		//events.emit('blockCommit', appState.blockHeight);
 		if (delayedTaskQueue.length > 0){
 			indexProtocol.processDelayedTask( appState.blockHeight ); //
 			
 			delayedTaskQueue = [];
 		}
-				
+const _delayTaskTs = process.hrtime(t1);
+const t2 = process.hrtime();				
 		indexProtocol.blockCommitHandler( appState.blockHeight );
+const _blockCommitTs = process.hrtime(t2);
+const t3 = process.hrtime();		
+		//Unnormal case
+		if (appState.appHash != '')  process.exit(42);
 		
-		endBlockTs = process.hrtime( beginBlockTs ); 
-
-		if (appState.appHash == ''){
+		//create full string
+		let jsonAppState = JSON.stringify( appState );//stringify
+const _JSONTs = process.hrtime(t3);	
+const t4 = process.hrtime();		
+		//calc actual hash
+		appState.appHash = indexProtocol.calcHash( jsonAppState, false);
+	
+const _calcHashTs = process.hrtime(t4);
+const t5 = process.hrtime();	
+		let jsonAvg = JSON.stringify(indexProtocol.lastAvg);
+const _jsonAvgTs = process.hrtime(t5);	
+	
+		saveOps.unshift({ type: 'put', key: 'appHash', 		value: appState.appHash });
+		saveOps.unshift({ type: 'put', key: 'blockHeight', 	value: appState.blockHeight });
+		saveOps.unshift({ type: 'put', key: 'appState', 	value: jsonAppState });
+		saveOps.unshift({ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: jsonAvg });
+		
+		/**
+		let ops = [
+			,
+			,
+			,
+			//{ type: 'put', key: 'tbl.system.lastavg', value: JSON.stringify( indexProtocol.lastAvg ) }, 
+			// @todo: more db size 
+			//save state history to fast revert 
+			//{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.appstate', value: appState.appHash + '::' + jsonAppState },
+			//TEST{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: JSON.stringify(appState.blockStore[0])}
+		];
+		
+		**/
+			
+		//if I Proposer - lets send Tx 
+		if (indexProtocol.isProposer(appState.blockProposer, appState.blockHeight) == true && indexProtocol.node.rpcHealth === true){
 						
-			//create full string
-			let jsonAppState = JSON.stringify( appState );//stringify
-			
-			//calc actual hash
-			appState.appHash = indexProtocol.calcHash( jsonAppState, false);
-			
-			saveOps.unshift({ type: 'put', key: 'appHash', 		value: appState.appHash });
-			saveOps.unshift({ type: 'put', key: 'blockHeight', 	value: appState.blockHeight });
-			saveOps.unshift({ type: 'put', key: 'appState', 	value: jsonAppState });
-			saveOps.unshift({ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.avg', value: JSON.stringify(indexProtocol.lastAvg) });
-			
-			/**
-			let ops = [
-				,
-				,
-				,
-				//{ type: 'put', key: 'tbl.system.lastavg', value: JSON.stringify( indexProtocol.lastAvg ) }, 
-				// @todo: more db size 
-				//save state history to fast revert 
-				//{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.appstate', value: appState.appHash + '::' + jsonAppState },
-				//TEST{ type: 'put', key: 'tbl.block.'+appState.blockHeight+'.tx', value: JSON.stringify(appState.blockStore[0])}
-			];
-			
-			if (saveOps.length > 0){
-				ops = ops.concat( saveOps );
-			}
-			**/
-			
-			const diff = process.hrtime(time);	
-			const time2 = process.hrtime();
-			const diff2 = process.hrtime(time2);
-						
-			//if I Proposer - lets send Tx 
-			if (indexProtocol.isProposer(appState.blockProposer, appState.blockHeight) == true && indexProtocol.node.rpcHealth === true){
-							
-				const t1 = process.hrtime();
-				const tx = indexProtocol.prepareCalculatedRateTx( indexProtocol.lastAvg );
+			const t1 = process.hrtime();
+			const tx = indexProtocol.prepareCalculatedRateTx( indexProtocol.lastAvg );
 
-				if (tx){
-					http.get(indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime(), {agent:rpcHttpAgent}, 	function(resp){
-						const tdiff = process.hrtime(t1);
-									
-						console.log('http responce code: ' + resp.statusCode + ' with time: ' + tdiff);
-					}).on('error', (e) => {
-					  console.error(`Got error: ${e.message}`);
-					});
-				}
-				else {
-					console.log('ERROR while building tx');
-					process.exit(1);	
-				}
+			if (tx){
+				http.get(indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime(), {agent:rpcHttpAgent}, 	function(resp){
+					const tdiff = process.hrtime(t1);
+								
+					console.log('http responce code: ' + resp.statusCode + ' with time: ' + tdiff);
+				}).on('error', (e) => {
+				  console.error(`Got error: ${e.message}`);
+				});
 			}
-			
-			currentThrottleCounter++; 
-			
-			if (currentThrottleCounter === dbSyncThrottle){
-				
-				return new Promise(function(resolve, reject){
-					stateDb.batch(saveOps, function (err){
-						if (!err){
-							let so = saveOps.length; 
-							saveOps = []; //reset all planned writes to main db
-							currentThrottleCounter = 0;
-											
-							console.log( appState.blockHeight + ' block, dTx: ' + appState.blockStore[0].tx.length + ', time: ' +moment.utc(appState.blockTime).format('HH:mm:ss DD/MM/YYYY')+', proposer: ' + appState.blockProposer + ' (me: ' + (appState.blockProposer == indexProtocol.node.address) + '), save to disc ('+so+' op) - OK. (commit: '+prettyHrtime(diff)+', s: '+prettyHrtime(diff2)+/*', tx_async: '+prettyHrtime(tdiff)+*/', b: '+ prettyHrtime(endBlockTs)+')');
-						
-							return resolve( {code: 0} );
-						}
-						else {
-							console.log('ERROR while save state to DB');
-							process.exit(1);	
-
-							return reject( {code:1} );
-						}
-					});
-				});			
+			else {
+				console.log('ERROR while building tx');
+				process.exit(1);	
 			}
-			
-			console.log( appState.blockHeight + ' block, dTx: ' + appState.blockStore[0].tx.length + ', time: ' +moment.utc(appState.blockTime).format('HH:mm:ss DD/MM/YYYY')+', proposer: ' + appState.blockProposer + ' (me: ' + (appState.blockProposer == indexProtocol.node.address) + '), save queue '+saveOps.length+' ops., (commit: '+prettyHrtime(diff)+', s: '+prettyHrtime(diff2)+', b: '+ prettyHrtime(endBlockTs)+')');
-
-		// Buffer.from(appState.appHash, 'hex')
-			return { code: 0 }
 		}
-		else 
-			process.exit(42);
 		
+		currentThrottleCounter++; 
+		
+		if (currentThrottleCounter === dbSyncThrottle){
+			const time2 = process.hrtime();
+			
+			return new Promise(function(resolve, reject){
+				
+				const diff = process.hrtime(time);
+				
+				stateDb.batch(saveOps, function (err){
+					if (!err){
+						let so = saveOps.length; 
+						saveOps = []; //reset all planned writes to main db
+						currentThrottleCounter = 0;
+						
+						const diff2 = process.hrtime(time2);
+						endBlockTs = process.hrtime( beginBlockTs );
+										
+						console.log( appState.blockHeight + ' block, dTx: ' + appState.blockStore[0].tx.length + ', time: ' +moment.utc(appState.blockTime).format('HH:mm:ss DD/MM/YYYY')+', proposer: ' + appState.blockProposer + ' (me: ' + (appState.blockProposer == indexProtocol.node.address) + '), save to disc ('+so+' op) - OK. (commit: '+prettyHrtime(diff)+', s: '+prettyHrtime(diff2)+', block: '+ prettyHrtime(endBlockTs)+')');
+					
+						return resolve( {code: 0} );
+					}
+					else {
+						console.log('ERROR while save state to DB');
+						process.exit(1);	
+
+						return reject( {code:1} );
+					}
+				});
+			});			
+		}
+		
+		const diff = process.hrtime(time);
+		endBlockTs = process.hrtime( beginBlockTs );
+		
+		console.log( appState.blockHeight + ' block, dTx: ' + appState.blockStore[0].tx.length + ', time: ' +moment.utc(appState.blockTime).format('HH:mm:ss DD/MM/YYYY')+', proposer: ' + appState.blockProposer + ' (me: ' + (appState.blockProposer == indexProtocol.node.address) + '), save queue '+saveOps.length+' ops., (commit: '+prettyHrtime(diff)+', block: '+ prettyHrtime(endBlockTs)+')');
+		
+
+
+
+	/*
+
+		console.log('Performance. delayTask: ' + prettyHrtime(_delayTaskTs) + 
+								', commitHandler: ' + prettyHrtime(_blockCommitTs) + 
+								', jsonAppState: ' + prettyHrtime(_JSONTs) + 
+								', calcHash: ' + prettyHrtime(_calcHashTs) + 
+								', jsonAvg: ' + prettyHrtime(_jsonAvgTs));
+	*/	
+		
+	// Buffer.from(appState.appHash, 'hex')
+		return { code: 0 }
+	
+		
+/**		
 }catch(e){
 	console.log( e );
 	
@@ -1970,24 +1988,10 @@ try {
 	process.exit(1);	
 	 
 	return { code: 1 }    
-}
+} **/
 	} 
 
 });
-
-/**
-//=== Debug
-setInterval(function(){
-	
-	console.log('\n');
-	
-	console.dir( blockHashStore, {depth:4, colors: true });
-	
-	console.log('\n');
-	
-	
-}, 60000);
-**/
 
 
 //Quick fix for RocksDB/LevelDOWN, no set option to delete OLD.log.ХХХХ files
