@@ -1,0 +1,520 @@
+<script>
+	if (indexProtocol._timer)
+		clearInterval( indexProtocol._timer );
+		
+	$('.content').hide(); 	
+	
+	function updatePage(){
+		$.getJSON( indexProtocol.networkURI +  '/status', function(res){
+			let obj = res.result;
+			
+			var el = $('.content');
+				el.find('#latest-block-height').html( '<a href="javascript: void indexProtocol.blockPage('+obj.sync_info.latest_block_height+');">'+ obj.sync_info.latest_block_height + '</a>');
+			
+			var latestDt = moment.utc( obj.sync_info.latest_block_time );	
+				el.find('#latest-block-datetime').html( latestDt.format('DD.MM.YYYY <br />HH:mm ss') );
+				
+			var latestHash = obj.sync_info.latest_block_hash.substring( 0, 7 ); 
+				el.find('#latest-block-hash').html( latestHash.toLowerCase() );
+			
+			let pv = obj.node_info.protocol_version;
+				el.find('#current-protocol').html( pv.app + '.' + pv.block + '.' + pv.p2p + '<br />v' + obj.node_info.version);
+			
+			//latest height
+			let _height = parseInt( obj.sync_info.latest_block_height );
+			
+			//if (indexProtocol.height == _height)
+			//	return;
+			
+			indexProtocol.height = _height;
+			
+			el.show();
+		});
+	}
+	
+	var curAccount = {
+		address	: '',
+		nonce	:	0
+	}
+	
+	
+	function updateAddressInfo(  address ){
+		if (!address || address.indexOf('indxt')){
+			console.log('Empty or invalid address');
+			return;
+		}
+		
+		$('.current-address').html( address );
+		
+		$.getJSON(indexProtocol.networkURI + 
+			'/abci_query?path="tbl.accounts.info"&data="'+address+'"', 	
+			function(res){
+				if (!res || !res.result || !res.result.response || !res.result.response.value)
+					return;
+				
+				var obj = window.atob( res.result.response.value );
+				var tmp = '';
+				
+				if (!obj) return;  
+				
+				obj = JSON.parse( obj );
+				
+				if (!obj) return; 
+				
+				console.log('Account info for address ' + address);
+				console.log( obj );
+				
+				let createdheight = '';
+				
+				if (obj.createdBlockHeight == 0){ //account from Genesis block
+					createdheight = '<small class="label label-success" style="cursor:pointer;font-weight:bold;" title="Account created at genesis block"> #'+obj.createdBlockHeight+'</small>';
+				}
+				else
+					createdheight = '<a href="#"> #'+obj.createdBlockHeight+'</a>';
+					
+				let _type = '';
+				
+				if (obj.type == 'node'){
+					_type = '<small class="label label-info" style="cursor:pointer;" title="Node account (validator or other node\'s type)"> '+obj.type+' </small>';
+				}
+				else
+				if (obj.type == 'user'){
+					_type = '<small class="label label-success" style="cursor:pointer;" title="User account"> '+obj.type+' </small>';
+				}
+				else
+					_type = obj.type;
+				
+				
+				let z = '';				
+					z = '<td>'+createdheight+'</td>' + 
+						'<td>'+obj.pubKeyComp+'</td>' + 
+						'<td>'+obj.name+' (+'+obj.ids.length+' alts.)</td>' + 
+						'<td>'+_type+'</td>' + 
+						'<td>'+obj.nonce+'</td>';
+			
+				$('.content').find('#address-tbl').empty().html( '<tr align="center">' + z + '</tr>' );
+				
+				curAccount.address 	= address;
+				curAccount.nonce 	= obj.nonce;
+				
+				//prepare assets 
+				let aTbl = '';
+				
+				_.each(obj.data.assets, function(v){
+					if (!v || v.amount === 0) return;
+					
+					let x = '';
+						x = '<td><b>' + v.symbol + '</b></td>' + 
+							'<td>' + v.asset.name + '</td>' + 
+							'<td><a href="javascript: void indexProtocol.addressPage(\''+v.asset.issuerAddress+'\');" title="Issuer address: '+v.asset.issuerAddress+'">' + v.asset.issuerName + '</td>' + 
+							'<td>' + v.asset.family + '.' + v.asset.type +'</td>' + 
+							'<td>' + (1/v.asset.divider) + '</td>' + 
+							'<td>' + v.asset.txFee + ' / ' + v.asset.txIssuerFee + '</td>' + 
+							
+							'<td><b>' + Number( v.amount / v.asset.divider ).toFixed(3) + '</b></td>' + 
+							
+							'<td>' + (v.asset.options.isTradable) + '</td>' + 
+							'<td>' + (v.asset.options.isTransferrable) + '</td>' + 
+							'<td>' + (v.asset.options.isBurnable) + '</td>' + 
+							//'<td>' + (v.asset.options.isMintable) + '</td>' + 
+							'<td>' + (v.asset.options.isUniqe) + '</td>';
+					
+					aTbl = aTbl + '<tr align="center">' + x + '</tr>';
+				});
+				
+				$('.content').find('#account-assets-tbl').empty().html( aTbl );
+				
+			
+			
+			
+			
+			});
+	}
+	
+	
+	function addNewNameWnd(){
+		var el = $('#add-new-altname-dialog');	
+
+		el.find('.btnSendTx').unbind('click').click(function(e){
+			var name = el.find('.my-alt-name').val();
+			
+			if (!name) name = 'alt-' + _.random(0, Number.MAX_SAFE_INTEGER);	// return false;
+			
+			var pKey = el.find('.my-private-key').val();
+			
+			//tester01
+			if (!pKey) pKey = '71a818282b4288c9db7eaf7ed0a2f3ba992796815442c0e0c753095dac155f28'; //return false;
+			
+			//check pKey 
+			var curve = window.Secp256k1;
+			var privKey = curve.uint256(pKey, 16); //as Bn
+			
+			if (privKey){
+			
+				var pn = curve.generatePublicKeyFromPrivateKeyData( privKey );
+				
+				//console.log( points );
+				//let x = curve.uint256( pn.x, 16 );
+				if (!curve.isValidPoint(curve.uint256( pn.x, 16 ), curve.uint256( pn.y, 16 ))){
+					alert('Invalid Secp256k1 point');
+					return;
+				}
+				
+				//generate pub key, uncompressed
+				var pubKey = '04' + pn.x + pn.y;
+				
+				var obj = {
+					ids			: [name],
+					pubKey		: pubKey,
+					address		: curAccount.address,
+					nonce		: curAccount.nonce + 1
+				};
+				
+				var objJson = JSON.stringify( obj );
+				
+				var objHash = CryptoJS.SHA256(  ).toString();
+				
+				//sign hash 
+				var _rawSig = curve.ecsign( curve.uint256( objHash, 16 ), privKey );
+				var	sign = _rawSig.r + _rawSig.s;
+				
+console.log( sign );
+				
+				//code:hash:sign:pubkey:flags:data
+				var tx = 'nnm:' + objHash + ':' + sign + ':' + pubKey + '::' + window.btoa( objJson );
+				
+console.log('All sounds GOOD!');
+console.log('Tx: ' + tx);
+
+				el.find('.btnSendTx').attr('disabled', 'disabled');
+
+				$.getJSON(indexProtocol.networkURI + '/broadcast_tx_async?tx="'+tx+'"&_=' + new Date().getTime(), function(res){
+console.log( res );
+				
+					if (!res || !res.result)
+						return;
+					
+					if (res && res.result && res.result.hash && res.result.code == 0){
+						
+						//All OK 
+						$('#add-new-altname-dialog').modal('hide');
+						
+						var _uid = _.uniqueId('notify-');
+						//add notify 
+						$('.notifyBlock').empty().html(
+						'<div class="alert alert-success alert-dismissible" id="'+_uid+'">' +
+						'<button type="button" class="close" data-dismiss="alert" aria-hidden="true">×</button><h4><i class="icon fa fa-check"></i> Tx successful</h4>Your tx success added to mempool of chain node. TxHash: <a href"#">'+res.result.hash+'</a></div>');
+						
+						setTimeout(function(){
+							$('.notifyBlock').find('#' + _uid).remove();
+						}, 5000);
+						    
+						
+						
+					}
+				
+				
+				});
+				
+				
+			
+			}
+			
+			/**
+			indexProtocol.sha256('test').then(function(digest){
+			  console.log(digest.toString());
+			}); **/
+			
+		//	console.log( [name, pk] );
+			
+		});
+
+		
+		
+		//var rpk = window.crypto.
+		//	el.find(
+	
+	
+	
+		el.modal('show');
+	}
+	
+	
+</script>
+
+
+<!-- Content Header (Page header) -->
+<section class="content-header">
+  <h1>
+	INDEXProtocol Network <small>Testnet</small>
+  </h1>
+  <ol class="breadcrumb">
+	<!--
+	<li><a href="#"><i class="fa fa-dashboard"></i> Home</a></li>
+	<li class="active">Dashboard</li>
+	-->
+  </ol>
+</section>
+
+<!-- Main content -->
+<section class="content">
+  <!-- Info boxes -->
+  <div class="row">
+	<div class="col-md-3 col-sm-6 col-xs-12">
+	  <div class="info-box">
+		<span class="info-box-icon bg-aqua"><i class="fa fa-align-center"></i></span>
+
+		<div class="info-box-content">
+		  <span class="info-box-text">Block Height</span>
+		  <span class="info-box-number">
+			<font id="latest-block-height"></font>
+			<br />
+			<font id="total-validators"></font>
+		  </span>
+		</div>
+		<!-- /.info-box-content -->
+	  </div>
+	  <!-- /.info-box -->
+	</div>
+	<!-- /.col -->
+	<div class="col-md-3 col-sm-6 col-xs-12">
+	  <div class="info-box">
+		<span class="info-box-icon bg-red"><i class="fa fa-clock"></i></span>
+
+		<div class="info-box-content">
+		  <span class="info-box-text">Block DateTime</span>
+		  <span class="info-box-number" id="latest-block-datetime"></span>
+		</div>
+		<!-- /.info-box-content -->
+	  </div>
+	  <!-- /.info-box -->
+	</div>
+	<!-- /.col -->
+
+	<!-- fix for small devices only -->
+	<div class="clearfix visible-sm-block"></div>
+
+	<div class="col-md-3 col-sm-6 col-xs-12">
+	  <div class="info-box">
+		<span class="info-box-icon bg-green"><i class="fa fa-hashtag"></i></span>
+
+		<div class="info-box-content">
+		  <span class="info-box-text">Block hash</span>
+		  <span class="info-box-number" id="latest-block-hash"></span>
+		</div>
+		<!-- /.info-box-content -->
+	  </div>
+	  <!-- /.info-box -->
+	</div>
+	<!-- /.col -->
+	<div class="col-md-3 col-sm-6 col-xs-12">
+	  <div class="info-box">
+		<span class="info-box-icon bg-yellow"><i class="fa fa-server"></i></span>
+
+		<div class="info-box-content">
+		  <span class="info-box-text">Protocol</span>
+		  <span class="info-box-number" id="current-protocol"></span>
+		</div>
+		<!-- /.info-box-content -->
+	  </div>
+	  <!-- /.info-box -->
+	</div>
+	<!-- /.col -->
+  </div>
+  <!-- /.row -->
+
+    <div class="row">
+		<div class="col-md-12 notifyBlock"></div>
+	</div>
+	
+	
+	
+	<div class="row">
+	<div class="col-md-12">
+		<!-- TABLE: LATEST ORDERS -->
+	  <div class="box box-info"> 
+		<div class="box-header with-border">
+		  <h3 class="box-title">Address / wallet Service</h3>
+		</div>
+		<!-- /.box-header -->
+		<div class="box-body" style="text-align:center;font-size:16px;">
+			<div>
+				<a href="javascript: void;" class="btn btn-success btn-sm" style="font-size:16px;">
+					<i class="fas fa-arrow-down"></i> Tranfser asset <b>TO</b> this address
+				</a>
+				
+				&nbsp;&nbsp;&nbsp;
+				
+				<a href="javascript: void;" class="btn btn-primary btn-sm" style="font-size:16px;">
+					<i class="fas fa-arrow-up"></i> Tranfser asset <b>FROM</b> this address
+				</a>
+				
+				&nbsp;&nbsp;&nbsp;
+				
+				<a href="javascript: void;" class="btn btn-default btn-sm" style="font-size:16px;">
+					<i class="far fa-envelope"></i> Send <b>message</b> 
+				</a>
+				
+				&nbsp;&nbsp;&nbsp;
+				
+				<a href="javascript: void addNewNameWnd('<?php echo strval( $_GET['address'] ); ?>');" class="btn btn-info btn-sm" style="font-size:16px;">
+					<i class="fa fa-users"></i> Add <b>name</b> 
+				</a>
+			</div>
+        </div>
+		<!-- /.box-body -->
+		<div class="box-footer clearfix">
+		  <!--<a href="javascript:void(0)" class="btn btn-sm btn-info btn-flat pull-left">Place New Order</a>
+		  <a href="javascript:void updateNetworkInfo();" class="btn btn-sm btn-default btn-flat pull-right">
+			<i class="fa fa-sync"></i> Update</a>-->
+		</div>
+		<!-- /.box-footer -->
+	  </div>
+	</div>
+	<!-- /.col -->
+  </div>
+  <!-- /.row -->
+  
+  
+  
+  <div class="row">
+	<div class="col-md-12">
+		<!-- TABLE: LATEST ORDERS -->
+	  <div class="box box-info"> 
+		<div class="box-header with-border">
+		  <h3 class="box-title">Address #<span class="current-address" style="font-weight:bold;"></span></h3>
+
+		</div>
+		<!-- /.box-header -->
+		<div class="box-body">
+		  <div class="table-responsive">
+			<table class="table no-margin">
+			  <thead>
+			  <tr align="center" style="text-align:center;">
+			    <th style="text-align:center;">Height</th>
+				<th style="text-align:center;">Public Key (compressed)</th>
+				<th style="text-align:center;">Name</th>
+				<th style="text-align:center;">Type</th>
+				<th style="text-align:center;">Tx</th>
+			  </tr>
+			  </thead>
+			  <tbody id="address-tbl">
+				
+			  </tbody>
+			</table>
+		  </div>
+		  <!-- /.table-responsive -->
+		</div>
+		<!-- /.box-body -->
+		<div class="box-footer clearfix" id="control-prevnext-btn">
+			&nbsp;
+		</div>
+		<!-- /.box-footer -->
+	  </div>
+	</div>
+	<!-- /.col -->
+  </div>
+  <!-- /.row -->
+  
+  <div class="row">
+		<div class="col-md-12">
+		  <div class="box box-success"> 
+			<div class="box-header with-border">
+			  <h3 class="box-title" style="text-align:center;font-weight:bold;">
+				<center>Assets balances</center></h3>
+			</div>
+			<!-- /.box-header -->
+			<div class="box-body">
+			  <div class="table-responsive">
+				<table class="table no-margin">
+				  <thead>
+				  <tr align="center" style="text-align:center;">
+					<th style="text-align:center;" colspan="7">Asset information</th>
+					<th style="text-align:center;background-color:#f4f4f4;" colspan="4">Options</th>
+				  </tr>
+				  
+				  
+				  <tr align="center" style="text-align:center;">
+					<th style="text-align:center;">Symbol</th>
+					<th style="text-align:center;">Name</th>
+					<th style="text-align:center;">Issuer</th>
+					<th style="text-align:center;">Type</th>
+					<th style="text-align:center;">Divider</th>
+					
+					<th style="text-align:center;">Fees</th>
+					
+					<th style="text-align:center;">Amount</th>
+					
+					<th style="text-align:center;">Trade</th>
+					<th style="text-align:center;">Transf</th>
+					<th style="text-align:center;">Burn</th>
+					<th style="text-align:center;">Uniq</th>
+				  </tr>
+				  </thead>
+				  <tbody id="account-assets-tbl">
+					
+				  </tbody>
+				</table>
+			  </div>
+			  <!-- /.table-responsive -->
+			</div>
+			<div class="box-footer clearfix">
+			  
+			</div>
+		  </div>
+		</div>
+	<!-- /.col -->
+    </div>
+  <!-- /.row -->
+  
+  <div class="row">
+		<div class="col-md-12">
+		  <div class="box box-success"> 
+			<div class="box-header with-border">
+			  <h3 class="box-title" style="text-align:center;font-weight:bold;">
+				<center>Messages</center></h3>
+			</div>
+			<!-- /.box-header -->
+			<div class="box-body">
+			  <div class="table-responsive">
+				<table class="table no-margin">
+				  <thead>
+				  <tr align="center" style="text-align:center;">
+					<th style="text-align:center;" colspan="2">Message</th>
+					<th style="text-align:center;background-color:#f4f4f4;" colspan="1">From</th>
+				  </tr>
+				  
+				  
+				  <tr align="center" style="text-align:center;">
+					<th style="text-align:center;">Date</th>
+					<th style="text-align:center;">Message body</th>
+					
+					<th style="text-align:center;">Name</th>					
+				  </tr>
+				  </thead>
+				  <tbody id="account-assets-tbl">
+					
+				  </tbody>
+				</table>
+			  </div>
+			  <!-- /.table-responsive -->
+			</div>
+			<div class="box-footer clearfix">
+			  
+			</div>
+		  </div>
+		</div>
+	<!-- /.col -->
+    </div>
+  <!-- /.row -->
+  
+  
+  
+</section>
+<!-- /.content -->
+
+
+<script>
+updatePage();
+updateAddressInfo( '<?php echo strval( $_GET['address'] ); ?>' );
+</script>

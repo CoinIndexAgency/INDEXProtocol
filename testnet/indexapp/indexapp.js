@@ -64,9 +64,9 @@ const storeLatestAvgBlocks = 99; //how many blocks stored for check AVG tx.
 const maxDiffFromAppHeight = 30; // avg quote from proposer - how much difference
 
 const fixedExponent = 1000000;
-let manualRevertOneBlock = false;
+let manualRevertTo = 0;
 
-let dbSyncThrottle = 20; //how many block per db dics sync
+let dbSyncThrottle = 1; //how many block per db dics sync
 let currentThrottleCounter = 0;
 
 var rpcHttpAgent = new http.Agent({
@@ -75,7 +75,7 @@ var rpcHttpAgent = new http.Agent({
 });
 
 
-	if (process.argv.indexOf('cleandb') != -1){
+	if (process.argv.indexOf('--cleandb') != -1){
 		console.log('\n     *** WARNING ***     \n');
 		console.log('Destroy ALL data from application db. All data will be losted!');
 		console.log('Clearing app state...');
@@ -101,17 +101,19 @@ var rpcHttpAgent = new http.Agent({
 	}
 	
 	//reverto <nubblock>
-	if (process.argv.indexOf('revertone') != -1){
-		console.log( 'WARN:  Manual revert appState to height-1');
+	if (process.argv.indexOf('--reverto') != -1){
+		console.log( 'WARN:  Manual revert appState to new height');
 		
-		manualRevertOneBlock = true;				
+		let _t = Math.abs( parseInt( process.argv[ process.argv.indexOf('--reverto')+1 ] ) );
+		
+		manualRevertTo = _t;				
 	}
 	
 	//save throttle
-	if (process.argv.indexOf('savesync') != -1){
+	if (process.argv.indexOf('--savesync') != -1){
 		console.log( 'INFO:  Manual save sync ');
 		
-		let _t = Math.abs( parseInt( process.argv[ process.argv.indexOf('savesync')+1 ] ) );
+		let _t = Math.abs( parseInt( process.argv[ process.argv.indexOf('--savesync')+1 ] ) );
 		
 		if (_t > 100)
 			_t = 20;
@@ -386,21 +388,7 @@ let indexProtocol = {
 						
 						process.exit();
 					}
-					
-					if (manualRevertOneBlock === true){
-						
-						console.log('\n');
-						console.log('WARN: appState.blockHeight at db: ' + appState.blockHeight);
-						console.log('WARN: manual rollback state (todo: height only) to -1, for: ' + (appState.blockHeight - 1));
-						console.log('\n');
-						
-						appState.blockHeight = appState.blockHeight - 1;
-						
-						events.emit('appStateRestored');
-						
-						return;
-					}
-						
+
 //TEST
 //appState.blockHeight = 99999;
 					console.log('Found: ' + appState.accountStore.length + ' accounts. ');
@@ -413,6 +401,13 @@ let indexProtocol = {
 								let acc = JSON.parse( val.toString('utf8') );
 								
 								if (acc){
+									
+									acc.pubKeyComp = crypto.ECDH.convertKey( Buffer.from(acc.pubKey, 'hex'),
+										'secp256k1',
+										'hex',
+										'hex',
+										'compressed');	
+
 									indexProtocol.accountsStore[ a ] = acc;
 								}
 							}
@@ -432,34 +427,15 @@ let indexProtocol = {
 							console.log('loaded AppHash: ' + loadedAppHash);
 							console.log('rehash AppHash: ' + calcAppHash);
 							
-//@todo DISABLE FOR DEV
+//@todo DISABLE FOR DEV hash eq check
 							if (loadedAppHash === calcAppHash){
 								appState.appHash = calcAppHash;
 								
 								console.log('State loaded OK\n');
+								
+								//Ready to GO
 								events.emit('appStateRestored');
-								/**
-								stateDb.get('tbl.system.lastavg', function(err, val){
-									if (!err && val && Buffer.isBuffer(val)){
-										val = JSON.parse( val.toString('utf8') );
 										
-										if (val){
-											
-											indexProtocol.lastAvg = val;
-											
-											console.log('Latest stored calcs AVG loaded OK');
-											
-											events.emit('appStateRestored');
-										}
-										else
-											process.exit(1);
-									}
-									else
-										process.exit(1);
-								});
-								**/
-
-														
 							}
 							else {
 								console.log('Error while appState loaded. Inconsistent data.');
@@ -1076,7 +1052,7 @@ let server = createServer({
 			version: appState.version, 
 			appVersion: appState.appVersion,
 			
-			lastBlockHeight: appState.blockHeight 
+			lastBlockHeight: appState.blockHeight - manualRevertTo
 			//lastBlockAppHash: appState.appHash  //now disable for debug
 		};
 		
@@ -1353,6 +1329,112 @@ let server = createServer({
 	
 				return {code: 0, value: Buffer.from(JSON.stringify( _res ), 'utf8').toString('base64')};
 			}
+			else
+			if (path === 'tbl.accounts.info'){
+				
+				if (data.length === 0){
+					return {code: 1 };
+				}
+				
+				let address = data.toString('utf8');
+				
+				console.log('Request info about: ' + address);
+				
+				//check it 
+				if (appState.accountStore.indexOf( address ) === -1){
+					return {code: 403 };
+				} 
+				
+				return new Promise(function(resolve, reject){
+					
+					if (indexProtocol.accountsStore[ address ]){
+						let account = indexProtocol.accountsStore[ address ];
+					
+						//@todo: pre-process address
+						console.log('Account data in memory cache!');
+						
+						if (!account.pubKeyComp){
+							//add compressed public key 
+							//const 	ecdh 	= 	crypto.createECDH('secp256k1');
+							
+							account.pubKeyComp = crypto.ECDH.convertKey( Buffer.from(account.pubKey, 'hex'),
+								'secp256k1',
+								'hex',
+								'hex',
+								'compressed');
+								
+							//console.log('Uncompressed key: ' + 	account.pubKey);
+							//console.log('Compressed key: ' + 	account.pubKeyComp);
+						}
+						
+						//fetch all data about assets 
+						_.each(account.data.assets, function(z, i){
+							if (z && z.symbol){
+								let ass = appState.assetStore[ z.symbol ];
+								
+								if (!ass) return;
+
+
+								let obj = {
+									symbol				: ass.symbol,
+									dividedSymbol		: ass.dividedSymbol,
+									type				: ass.type,
+									family				: ass.family,
+									standart			: ass.standart,
+									name				: ass.name,
+									divider				: ass.divider,
+									txFee 				: ass.txFee,
+									txIssuerFee			: ass.txIssuerFee,
+									issuerAddress		: ass.issuerAddress,
+									issuerName			: ass.issuerName,
+									
+									options				: ass.options						
+								};
+								
+								z.asset = obj;
+								// account.data.assets[i].asset = obj;									
+							}
+						});
+												
+						return resolve({code: 0, value: Buffer.from(JSON.stringify( account ), 'utf8').toString('base64')});
+					}
+					
+					//restore from disc 				
+					stateDb.get('tbl.accounts.' + address, function(err, val){
+						if (!err && val){
+							console.log('Query fetch: latest account state from addr: ' + address);
+							
+							if (Buffer.isBuffer(val)){
+								val = val.toString('utf8');								
+							}
+							
+							//update local storage memory 
+							//@todo: need fixed length of in-memory cache
+							let z = JSON.parse( val );
+								if (!z.pubKeyComp){
+									//add compressed public key 
+									//const 	ecdh 	= 	crypto.createECDH('secp256k1');
+									
+									z.pubKeyComp = crypto.ECDH.convertKey( Buffer.from(z.pubKey, 'hex'),
+                                        'secp256k1',
+                                        'hex',
+                                        'hex',
+                                        'compressed');
+										
+									console.log('Uncompressed key: ' + 	z.pubKey);
+									console.log('Compressed key: ' + 	z.pubKeyComp);	
+								}
+								
+							indexProtocol.accountsStore[ address ] = z;
+														
+							//@todo: optimize code/decode
+							return resolve( {code: 0, value: Buffer.from(val, 'utf8').toString('base64')} );
+						}
+						else
+							return resolve( {code:1} );
+					});					
+				});		
+			}
 		}
 		
 		return { code: 1 };
@@ -1473,10 +1555,10 @@ let server = createServer({
 				//check base structure of tx: code:hash:sign:pubkey:flags:data
 				//check signature 
 				
-				if (z.length != 6)		return { code: 1, log: txType + ': wrong tx length'};
-				if (!z[(z.length-1)]) 	return { code: 1, log: txType + ': empty data'}; 
-				if (!z[1])				return { code: 1, log: txType + ': wrong or empty hash'}; 
-				if (!z[3])				return { code: 1, log: txType + ': wrong public key'}; 
+				if (z.length != 6)		return { code: 0, log: txType + ': wrong tx length'};
+				if (!z[(z.length-1)]) 	return { code: 0, log: txType + ': empty data'}; 
+				if (!z[1])				return { code: 0, log: txType + ': wrong or empty hash'}; 
+				if (!z[3])				return { code: 0, log: txType + ': wrong public key'}; 
 				
 				var pubKey = z[3].toLowerCase();
 				
@@ -1495,7 +1577,7 @@ let server = createServer({
 							if (val && val != ''){
 								console.log('Address already exists');
 								
-								return resolve({code: 1, log: 'Address already exists'});
+								return resolve({code: 0, log: 'Address already exists'});
 							}
 							
 							return resolve( {code: 0} );
@@ -1508,6 +1590,47 @@ let server = createServer({
 				
 				break;
 			}
+			case 'NNM': {
+				console.log('REG: checkTx of register new alt-name(s) for existing address');
+				
+				console.dir( z, {depth:16});
+				
+				
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase();
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+
+console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});				
+				
+				/**
+				//check base structure of tx: code:hash:sign:pubkey:flags:data
+				if (z.length != 6)		return { code: 1, log: txType + ': wrong tx length'};
+				if (!z[(z.length-1)]) 	return { code: 1, log: txType + ': empty data'}; 
+				if (!z[1])				return { code: 1, log: txType + ': wrong or empty hash'}; 
+				if (!z[3])				return { code: 1, log: txType + ': wrong public key'}; 
+				
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				**/
+				let _hash = sha256( rawData );
+				
+				var pubKey = z[3]; //.toLowerCase();
+console.log( 'hash: ' + _hash );				
+				//check signature 
+				let checkSign = secp256k1.verify(_hash, Buffer.from(z[2], 'hex'), Buffer.from(pubKey, 'hex'));
+					
+				if (checkSign != true){
+					console.log('NNM: Invalid signature');
+					
+					return { code: 1, log: 'Invalid signature' };   
+				}
+			
+			
+				break;
+			}			
 			
 			default: {	
 				break;
@@ -1520,7 +1643,7 @@ let server = createServer({
 	deliverTx: function(request) {
 //try {
 		//console.log('Call: DeliverTx');    
-		//let txHash 	= crypto.createHash('sha256').update(request.tx).digest('hex');
+		let txHash 	= crypto.createHash('sha256').update(request.tx).digest('hex');
 		let tx 		= request.tx.toString('utf8'); //'base64'); //Buffer 
 		
 		//updated format: code:hash:sign:pubkey:flags:data
@@ -1630,7 +1753,7 @@ let server = createServer({
 			//code:hash:sign:pubkey:flags:data
 			case 'REG' : {				
 				console.log('REG: deliverTx call');
-				
+try{				
 				let hash = z[1].toLowerCase(); 
 				let sign = z[2].toLowerCase(); 
 				let pubk = z[3].toLowerCase();
@@ -1638,14 +1761,17 @@ let server = createServer({
 				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
 				
 				let data = JSON.parse( rawData );
+
+console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
 				
 				if (data){
+					
 					let _hash = sha256( rawData );
 					
 					if (_hash.toString('hex').toLowerCase() != hash){
 						console.log('REG: Invalid hash, compute and stored/signed');
 						
-						return { code: 1, log: 'Invalid hash' };
+						return { code: 0, log: 'Invalid hash' };
 					}
 			
 					let checkSign = secp256k1.verify(_hash, Buffer.from(sign, 'hex'), Buffer.from(pubk, 'hex'));
@@ -1653,18 +1779,18 @@ let server = createServer({
 					if (checkSign != true){
 						console.log('REG: Invalid signature');
 						
-						return { code: 1, log: 'Invalid signature' };   
+						return { code: 0, log: 'Invalid signature' };   
 					}
 					
 					if (!data.address || !data.ids || data.ids.length < 1){
 						console.log('REG: Invalid or empty address');
 						
-						return { code: 1, log: 'Invalid or empty address' };
+						return { code: 0, log: 'Invalid or empty address' };
 					}
 					
 					//fix to older addresses, without prefix 
 					if (data.address.indexOf(appState.options.addressPrefix) !== 0){
-						return { code: 1, log: 'Address at old format, invalid' };
+						return { code: 0, log: 'Address at old format, invalid' };
 					}
 					
 					data.createdBlockHeight = appState.blockHeight;
@@ -1685,10 +1811,69 @@ let server = createServer({
 					return { code: 0, log: 'REG:' + data.address }; //, log: 'REG:' + x.name + ';' + x.addr + ';OK' };
 				}
 				else
-					return { code: 1, log: 'Invalid data of reg tx' };
-		
+					return { code: 0, log: 'Invalid data of reg tx' };
+}catch(e){
+	console.log('Erroro while deliverTx app handler');
+	console.dir( e, {depth:16, colors: true});
+	
+	return { code: 0 };
+}
+
+			
+				return { code: 0 };
 				break;
 			}
+			case 'NNM' : {				
+				console.log('NNM: deliverTx call');
+				
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase();
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+
+console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
+				
+				if (data){
+					
+					let _hash = sha256( rawData );
+					
+					if (_hash.toString('hex').toLowerCase() != hash){
+						console.log('NNM: Invalid hash, compute and stored/signed');
+						
+						return { code: 1, log: 'Invalid hash' };
+					}
+			
+					let checkSign = secp256k1.verify(_hash, Buffer.from(sign, 'hex'), Buffer.from(pubk, 'hex'));
+					
+					if (checkSign != true){
+						console.log('NNM: Invalid signature');
+						
+						return { code: 1, log: 'Invalid signature' };   
+					}
+					
+					if (!data.address || !data.ids || data.ids.length < 1){
+						console.log('NNM: Invalid or empty address');
+						
+						return { code: 1, log: 'Invalid or empty address' };
+					}
+					
+					if (!data.nonce || data.nonce < 1){
+						console.log('NNM: Invalid nonce');
+						
+						return { code: 1, log: 'Invalid nonce' };
+					}
+					
+					//Check forbidden names 
+					
+					
+					
+				}
+					
+				return { code: 0 }
+			}		
 			
 			default: {	//DEBUG
 				return { code: 0, log: 'Unknown tx type' };
@@ -1704,8 +1889,8 @@ let server = createServer({
 }					
 finally {
 	return { code: 0 }; 	
-}		
-*/		
+}*/		
+		
 		//let number = tx.readUInt32BE(0)
 		//if (number !== state.count) {
 		//  return { code: 1, log: 'tx does not match count' }

@@ -26,39 +26,15 @@
 			indexProtocol.height = _height;
 			
 			el.show();
-		});
+		}); 
 	}
 	
-	function newWalletGenerator(){
-		$.getJSON(indexProtocol.networkURI + '/abci_query?path="generatenewaccount"', function(res){
-			if (!res || !res.result || !res.result.response || !res.result.response.value)
-				return;
-				
-			var obj = window.atob( res.result.response.value );
-			var tmp = '';
-				
-			if (!obj) return;  
-				
-			obj = JSON.parse( obj );
-				
-			if (!obj) return; 
-			
-			//console.log( obj );
-			
-			$('.new-wallet').empty();
-			
-			$('#new-wallet-address').html( obj.address );
-			$('#new-wallet-privkey').html( obj.privKey );
-			$('#new-wallet-pubkey').html( obj.pubKey.match(/.{1,63}/g).join('<br />') );
-			
-
-			
-			$('#new-wallet-dialog').modal('show');
-		});		
-	};
+	function newTokenGeneration(){}
 	
-	function updateAccountsList(){
-		$.getJSON(indexProtocol.networkURI + '/abci_query?path="tbl.accounts.all"', function(res){
+	function newContractGeneration(){}
+	
+	function updateAssetsList(){
+		$.getJSON(indexProtocol.networkURI + '/abci_query?path="tbl.assets.all"', function(res){
 			if (!res || !res.result || !res.result.response || !res.result.response.value)
 				return;
 			
@@ -72,28 +48,72 @@
 			
 			if (!obj) return; 
 
+			console.log( obj );  
+		
+		/***
+				<th style="text-align:center;">Symbol</th>
+				<th style="text-align:center;">Issuer</th>	
+				<th style="text-align:center;">Block</th>				
+				<th style="text-align:center;">Type</th>
+				<th style="text-align:center;">Divider</th>
+				<th style="text-align:center;">Tx</th>
+				
+				<th style="text-align:center;">Initial</th>
+				<th style="text-align:center;">Current</th>	
+				<th style="text-align:center;">Max Supply</th>
+		**/
+			
 			_.each(obj, function(v, i){
+				/**
 				if (!v.balance || v.balance == 0)
 					v.balance = 0;
 				else
 					v.balance = '~' + v.balance;
+				**/
+				let type = '';
+				
+				if (v.type === 'coin')
+					type = '<small class="label bg-yellow"> coin </small>';
+				else
+				if (v.type === 'token')
+					type = '<small class="label bg-green"> token </small>';
+				else
+				if (v.type === 'contract')
+					type = '<small class="label bg-blue"> contract </small>';
+				
+				let circulation = 0;
+				
+				_.each(v.holders, function(z, addr){
+					circulation = circulation + z;
+				});
+				
+				//test calc human-based 
+				let _init = Number(( v.emission.initial / v.divider ) / 1000000).toFixed(2);
+				let _circ = Number(( circulation / v.divider ) / 1000000).toFixed(2);
+				let _max = Number(( v.emission.maxSupply / v.divider ) / 1000000).toFixed(2);
 			
-				let z = '<td><a href="javascript: void indexProtocol.blockPage('+parseInt(v.height)+');">'+v.height+'</td>' + 
-						'<td><a href="javascript: void indexProtocol.addressPage(\''+v.address+'\');">'+v.address+'</a></td>' + 
-						'<td>'+v.name+'</td>' + 
-						'<td>'+v.type+'</td>' + 
-						'<td>'+v.nonce+'</td>' +  
-						'<td>'+v.balance+'</td>' + 
-						'<td><div class="btn-group">' + 
-							'<button type="button" class="btn btn-default btn-flat btn-xs" title="Send assets TO this account"><i class="far fa-money-bill-alt"></i></button>' + 
-							'<button type="button" class="btn btn-default btn-flat btn-xs" title="Send a message TO this account"><i class="far fa-envelope"></i></button> ' + 
-                    '</div></td>';  
-						
-				tmp = '<tr align="center">' + z + '</tr>' + tmp;
+				let z = '<td><a href="javascript: void indexProtocol.tokenPage(\''+(v.symbol)+'\');">'+v.symbol+'</td>' + 
+						'<td><a href="javascript: void indexProtocol.emitentPage(\''+v.issuerAddress+'\');">'+v.issuerName+'</a></td>' + 
+						'<td><a href="javascript: void indexProtocol.blockPage('+v.emission.issueHeight+');">#'+v.emission.issueHeight+'</a></td>' + 
+						'<td><b>'+v.family + '</b> ' + type+'</td>' + 
+						'<td>'+(1/v.divider)+'</td>' + 
+						'<td>'+v.tx.length+'</td>' + 
+						'<td>'+_.size(v.holders)+'</td>' + 
+						'<td style="cursor:pointer;" title="raw initial emission: '+v.emission.initial+'">'+_init+'M</td>' + 
+						'<td style="cursor:pointer;" title="raw circulation supply: '+circulation+'">'+_circ+'M</td>' +
+						'<td style="cursor:pointer;" title="raw total supply: '+v.emission.maxSupply+'">'+_max+'M</td>' +
+						'</td>';  
+				
+				if (v.emission.issueHeight == 0)				
+					tmp = tmp + '<tr align="center" style="font-weight:bold;">' + z + '</tr>';
+				else
+					tmp = tmp + '<tr align="center">' + z + '</tr>';
 			
 			});
 			
-			el.find('#accounts-tbl').empty().html( tmp );
+			
+			
+			el.find('#assets-tbl').empty().html( tmp );
 		});
 	}
 </script>
@@ -183,40 +203,29 @@
 		<!-- TABLE: LATEST ORDERS -->
 	  <div class="box box-info"> 
 		<div class="box-header with-border">
-		  <h3 class="box-title">Wallet Service</h3>
+		  <h3 class="box-title">Assets Service</h3>
 		</div>
 		<!-- /.box-header -->
 		<div class="box-body" style="text-align:center;font-size:16px;">
 			<div>
-				<a href="javascript: void newWalletGenerator();" class="btn btn-default btn-sm" style="font-size:16px;">
-					<i class="fa fas fa-folder-plus"></i> Generate <b>NEW</b> account
+				<a href="javascript: void newTokenGeneration();" class="btn btn-default btn-sm" style="font-size:16px;">
+					<i class="fa fas fa-folder-plus"></i> Issue new <b>token</b>
+					&nbsp;&nbsp;&nbsp;
+					<span class="pull-right-container">
+					  <small class="label pull-right bg-aqua"><i>TBD</i></small>
+					</span>
 				</a>
 				&nbsp;&nbsp;&nbsp;
 				
-				<a href="javascript: void;" class="btn btn-success btn-sm" style="font-size:16px;">
-					<i class="fa far fa-key"></i> I have <b>private Key</b>, open my account
+				<a href="javascript: void newContractGeneration();" class="btn btn-default btn-sm" style="font-size:16px;">
+					<i class="fa fas fa-folder-plus"></i> Create new <b>contract</b>
+					&nbsp;&nbsp;&nbsp;
+					<span class="pull-right-container">
+					  <small class="label pull-right bg-aqua"><i>TBD</i></small>
+					</span>
 				</a>
+
 			</div>
-			
-			<div style="margin-top:10px;">
-				<div class="input-group">
-					<span class="input-group-addon">Find account</span>
-					<input type="text" class="form-control">
-					<span class="input-group-addon bg-green">&nbsp;&nbsp;&nbsp;<i class="fas fa-search"></i>&nbsp;&nbsp;&nbsp;</span>
-				</div>
-			</div>
-			
-			<!--
-			<a class="btn btn-default btn-sm" style="font-size:16px;">
-				<i class="fa fas fa-exchange-alt"></i> Transfer assets 
-			</a>
-			<a class="btn btn-default btn-sm" style="font-size:16px;">
-				<i class="fa far fa-envelope"></i> Sign&amp;Send message
-			</a>
-			<a class="btn btn-default btn-sm" style="font-size:16px;">
-				<i class="fa fas fa-share-alt"></i> Add name/id
-			</a>
-			-->
         </div>
 		<!-- /.box-body -->
 		<div class="box-footer clearfix">
@@ -236,7 +245,7 @@
 		<!-- TABLE: LATEST ORDERS -->
 	  <div class="box box-info"> 
 		<div class="box-header with-border">
-		  <h3 class="box-title">Addresses and accounts</h3>
+		  <h3 class="box-title">Tokens and Contracts</h3>
 <!--
 		  <div class="box-tools pull-right">
 			<button type="button" class="btn btn-box-tool" data-widget="collapse"><i class="fa fa-minus"></i>
@@ -248,19 +257,27 @@
 		<!-- /.box-header -->
 		<div class="box-body">
 		  <div class="table-responsive">
-			<table class="table no-margin">
+			<table class="table no-margin table-striped">
 			  <thead>
 			  <tr align="center" style="text-align:center;">
-			    <th style="text-align:center;">Block</th>
-				<th style="text-align:center;">Address</th>				
-				<th style="text-align:center;">Name (primary)</th>
+				<th style="text-align:center;" colspan="7">Asset specification</th>
+				<th style="text-align:center;background-color:#f4f4f4;" colspan="3">Emission</th>
+			  </tr>
+			  <tr align="center" style="text-align:center;">
+			    <th style="text-align:center;">Symbol</th>
+				<th style="text-align:center;">Issuer</th>	
+				<th style="text-align:center;">Block</th>				
 				<th style="text-align:center;">Type</th>
-				<th style="text-align:center;">Tx</th>	
-				<th style="text-align:center;">Amount, IDX</th>				
-				<th style="text-align:center;">Actions</th>	
+				<th style="text-align:center;">Divider</th>
+				<th style="text-align:center;">Tx</th>
+				<th style="text-align:center;">Holders</th>				
+				
+				<th style="text-align:center;">Initial</th>
+				<th style="text-align:center;">Circulation</th>	
+				<th style="text-align:center;">Max Supply</th>				
 			  </tr>
 			  </thead>
-			  <tbody id="accounts-tbl">
+			  <tbody id="assets-tbl">
 				
 			  </tbody>
 			</table>
@@ -271,7 +288,7 @@
 		<div class="box-footer clearfix">
 		  <!--<a href="javascript:void(0)" class="btn btn-sm btn-info btn-flat pull-left">Place New Order</a>-->
 		  <span style="" class="pull-left" id="net-total-traffic"></span>
-		  <a href="javascript:void updateAccountsList();" class="btn btn-sm btn-default btn-flat pull-right">
+		  <a href="javascript:void updateAssetsList();" class="btn btn-sm btn-default btn-flat pull-right">
 			<i class="fa fa-sync"></i> Update</a>
 		</div>
 		<!-- /.box-footer -->
@@ -289,48 +306,8 @@
 
 
 
+
 <script>
 updatePage();
-updateAccountsList();
-
-/**
-function cryptoTest(){
-	var curve = window.Secp256k1;
-	
-	
-	
-	var pKey = '69586daf9e27c4a9ec659b66848cae17d4ad1f5ad9fcedc73967edf28f16de0b';
-	
-	console.log('PrivateKey: ' + pKey);	
-	
-	var privKey = Secp256k1.uint256(pKey, 16); //as Bn
-	
-	console.log( privKey );
-	
-	var pubKey = curve.generatePublicKeyFromPrivateKeyData( privKey );
-
-	console.log( pubKey );
-	console.log( pubKey.x );
-	
-	//var zz = curve.decompressKey( privKey, 16);
-	
-	//console.log( zz );
-	
-	var hexPubKey = '04' + pubKey.x + pubKey.y;
-	
-	
-	//console.log( hexPubKey );
-	
-	if (hexPubKey === '045e3a73eea75fe9432c80a55890f921be45e7056314842130c86b2ecb3328f61e9d2db125d60a5d22cd9a9a11a2bcabaf8c743958683360c339a785494926cd6e'){
-		
-		//alert('Browser PubKey ======= Generated pubkey!');
-	
-	}
-	else
-		console.log('Fuuuuck! Invalid pubKey');
-	
-}
-**/
-
-
+updateAssetsList();
 </script>

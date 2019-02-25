@@ -115,6 +115,17 @@ console.dir( _valPrivateKeys, {depth: 4, color:true} );
 
 //create some Initial acc for devs 
 var _devAccounts = {
+	'tester01'			: '71a818282b4288c9db7eaf7ed0a2f3ba992796815442c0e0c753095dac155f28',
+	'tester02'			: '0ad0200c4aa3b5295fed1c53b258f04929db954994a403462db1dc2126f9881f',
+	'tester03'			: '3acf08075429f8a2a75e15dddca1f1ae822fe4bb7fe33601f11508fa2d496e7c',
+	'tester04'			: '692e9512e82d85705944abb8b627cf7f28c7208698b52b87a865ec725ca2c50d',
+	'tester05'			: '288bd00d0c45379d3fd858db4e27bc937af9b6bb3980d433bc44cb62d9ed100f',
+	'tester06'			: 'f4f53fc8d7030a406d5aabe978be3df25936ce9daefabc22429d1a6812c5bdbc',
+	'tester07'			: 'f73d7dab4a1de98863a93dedc267ab6c9d7c3a94a4d07650dbac783d7b48b49d',
+	'tester08'			: 'dd7226d351881248a919a45c2e2d9d22b80af7aeb6bf09f882c796231d62795d',
+	'tester09'			: '582f84f40dd2eea4a69f096d1e42b834978f7ae3fd0b896d8dec8d8c14b59a09',
+	'tester10'			: '630ef1136c81bcf80e6274d8a794439d855e25b5aca602160f321d672a8eae3f', 
+		
 	'raiden' 			: 'b283ef6aadd9fd8fcb838a2f7f13ac85c8f2dda4460ab62dbfa31a72bd1830a0',
 	'aleks_raiden'  	: '96acfd8678524f7b17f618d27161be2f28d862800406aa73de38243fc0895a41',
 	'yuliya'  			: 'dfdcdd4e3d839a1b59acb9c71e18c020659009fadf5ecf608046c5f4d754a358',
@@ -144,16 +155,7 @@ var _devAccounts = {
 	'indx.exchange'		: '284f95b176836013a7e344690f1f428bb46a107c3029fe81dc6f30b5f0f7e3d7',
 	'openfxmarket'		: '5dc6101928ef5afbf1e6cc90c134efb1c04f9a6ac99658b7fd396f9d00dd077a',
 	
-	'tester01'			: '71a818282b4288c9db7eaf7ed0a2f3ba992796815442c0e0c753095dac155f28',
-	'tester02'			: '0ad0200c4aa3b5295fed1c53b258f04929db954994a403462db1dc2126f9881f',
-	'tester03'			: '3acf08075429f8a2a75e15dddca1f1ae822fe4bb7fe33601f11508fa2d496e7c',
-	'tester04'			: '692e9512e82d85705944abb8b627cf7f28c7208698b52b87a865ec725ca2c50d',
-	'tester05'			: '288bd00d0c45379d3fd858db4e27bc937af9b6bb3980d433bc44cb62d9ed100f',
-	'tester06'			: 'f4f53fc8d7030a406d5aabe978be3df25936ce9daefabc22429d1a6812c5bdbc',
-	'tester07'			: 'f73d7dab4a1de98863a93dedc267ab6c9d7c3a94a4d07650dbac783d7b48b49d',
-	'tester08'			: 'dd7226d351881248a919a45c2e2d9d22b80af7aeb6bf09f882c796231d62795d',
-	'tester09'			: '582f84f40dd2eea4a69f096d1e42b834978f7ae3fd0b896d8dec8d8c14b59a09',
-	'tester10'			: '630ef1136c81bcf80e6274d8a794439d855e25b5aca602160f321d672a8eae3f'	
+	
 };
 
 var _devAddr = [];

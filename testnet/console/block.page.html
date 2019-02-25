@@ -120,6 +120,8 @@
 				'AVG' : ''
 			};
 			
+			var _indxtmp = []; //tmp
+			
 			var indices = []; //list of indices at this block
 			
 			_.each(decData, function(v){
@@ -168,6 +170,11 @@
 					let _sobj = _.find(indexProtocol.dataSources, function(v, i){
 						if (i.toLowerCase() === d.excode.toLowerCase())	return true;
 					});
+					
+					if (_indxtmp.indexOf( d.ts ) != -1) 
+						return;
+					else
+						_indxtmp.push( d.ts ); 
 					
 					let source = d.excode;
 					

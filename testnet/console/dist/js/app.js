@@ -6,7 +6,7 @@ $(function () {
 	  
 	networkURI : 'https://rpc.testnet.indexprotocol.online', //current network address
 
-	switchNetwork: function(net){
+	switchNetwork: function(net, reloadPage){
 		if (net == 'testnet'){
 			$('.select-network').html( '<i class="fa fa-sitemap"></i> Alpha testnet' );
 			this.networkURI = 'https://rpc.testnet.indexprotocol.online';
@@ -18,6 +18,9 @@ $(function () {
 		}
 		
 		window.localStorage.setItem('networkType', net);
+		
+		if (reloadPage === true)
+			top.location.reload(true);
 	},
 	  
 	run: function(){
@@ -27,9 +30,9 @@ $(function () {
 			let netType = storage.getItem('networkType');
 			
 			if (netType)
-				this.switchNetwork( netType );
+				this.switchNetwork( netType ); 
 		}
-		
+		  
 		
 		
 		
@@ -70,21 +73,53 @@ $(function () {
 		console.log('Search for: ' + val + ' (isNumber: '+$.isNumeric( val )+')' );
 		
 		if ($.isNumeric( val )){
-				val = parseInt(val);
-				
-				if (val > 0){
-					//possible block height?
-					indexProtocol.blockPage( val );
-				}
-			}	
-		
-		
-		
+			val = parseInt(val);
+			
+			if (val > 0){
+				//possible block height?
+				indexProtocol.blockPage( val );
+			}
+		}
+		else
+		if (val.indexOf('indxt') === 0 || val.indexOf('@') !== -1){
+			//possible address?
+			indexProtocol.addressPage( val );
+		}
 	},
 	
 	_timer: null,	
 	height: null,
-	
+	 
+	/**
+	sha256: function(str){
+	  // Get the string as arraybuffer.
+	  var buffer = new TextEncoder("utf-8").encode(str);
+	  
+	  return crypto.subtle.digest({name:"SHA-256"}, buffer).then(function(hash){
+		return hash;
+	  })
+	},
+	**/
+/**
+	hex: function(buffer) {
+	  var digest = ''
+	  var view = new DataView(buffer)
+	  for(var i = 0; i < view.byteLength; i += 4) {
+		// We use getUint32 to reduce the number of iterations (notice the `i += 4`)
+		var value = view.getUint32(i)
+		// toString(16) will transform the integer into the corresponding hex string
+		// but will remove any initial "0"
+		var stringValue = value.toString(16)
+		// One Uint32 element is 4 bytes or 8 hex chars (it would also work with 4
+		// chars for Uint16 and 2 chars for Uint8)
+		var padding = '00000000'
+		var paddedValue = (padding + stringValue).slice(-padding.length)
+		digest += paddedValue
+	  }
+	  
+	  return diges;
+	},
+**/	
 	totalNodesBytes: 0,
 	
 	nodeCodes: {
@@ -333,6 +368,16 @@ $(function () {
 	accountsPage: function(){
 		var el = $('#console-content-wrapper');
 			el.empty().load('/console/accounts.page.html');
+	},
+	
+	assetsPage: function(){
+		var el = $('#console-content-wrapper');
+			el.empty().load('/console/assets.page.html');
+	},
+	
+	addressPage: function(address){
+		var el = $('#console-content-wrapper');
+			el.empty().load('/console/address.page.html?address=' + address);
 	},
 	
 	datasourcePage: function(){
