@@ -31,6 +31,8 @@
   <script src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
   <![endif]--> 
   
+  <script src="dist/js/secp256k1-browserify.js"></script>
+  
   <script>
 	var indexProtocol = {};  
   </script>
@@ -369,7 +371,7 @@
             <div class="box-body">
               
 			  <div>
-				<h3 class="box-title" style="font-size:18px;"><b>Sign tx by YOUR private key</b></h3>
+				<h3 class="box-title" style="font-size:18px;"><b>Sign tx by MY private key</b></h3>
 			  
 				<input type="text" class="form-control input-sm my-private-key" placeholder="private key in hex format">
 			  
@@ -390,7 +392,56 @@
   </div><!-- /.modal-dialog -->
 </div><!-- /.modal -->
     
-  
+
+  <!-- send message to any existing account -->
+  <div class="modal fade" tabindex="-1" role="dialog" id="send-message-dialog">
+  <div class="modal-dialog" role="document" style="width:600px;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+        <h4 class="modal-title">Send message to any account</h4>
+      </div>
+      <div class="modal-body">
+        
+		<div class="box box-solid">
+            <div class="box-header with-border">
+              <h3 class="box-title" style="width:100%;"><b>Your message</b> <span class="pull-right">(max: 4Kb. txFee: <b>3.00</b> IDX)</span></h3>
+			  
+			  <div>
+				<textarea class="form-control" id="my-message-text" rows="3" placeholder="Write your message..."></textarea>
+			  </div>
+			  
+			   <div style="margin-top:3px;">
+				<input type="text" class="form-control input-sm sendto" id="my-message-to" placeholder="Address or name (or public key, if you known it)">
+			   </div>  
+			  
+			  <div><i><b>Important!</b> Message are opend to any user, not only recipient. Use custom encription to hide text.</i></div>  
+			 
+			</div>
+            <!-- /.box-header -->
+            <div class="box-body">
+              
+			  <div>
+				<h3 class="box-title" style="font-size:18px;"><b>Sign tx by MY private key</b></h3>
+			  
+				<input type="text" class="form-control input-sm my-private-key" placeholder="private key in hex format">
+			  
+			  </div>
+			  
+			  
+			  <div style="text-align:center;"><b style="color:red;">KEEP SAVE YOUR PRIVATE KEY!</b></div>
+            </div>
+            <!-- /.box-body -->
+          </div>
+		
+      </div>
+      <div class="modal-footer">
+        <!--<button type="button" class="btn btn-default" data-dismiss="modal">Close</button>data-dismiss="modal"-->
+        <button type="button" class="btn btn-success btnSendTx" ><b>OK</b>, send Tx</button>
+      </div>
+    </div><!-- /.modal-content -->
+  </div><!-- /.modal-dialog -->
+</div><!-- /.modal -->	
   
   
   
@@ -433,9 +484,18 @@
 <!-- SlimScroll -->
 <script src="bower_components/jquery-slimscroll/jquery.slimscroll.min.js"></script>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/3.1.9-1/crypto-js.min.js"></script>
+<!--
 <script src="dist/js/bn.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/3.1.9-1/crypto-js.min.js"></script>
+
 <script src="dist/js/secp256k1.js"></script>
+<script src="dist/js/elliptic.js"></script>
+
+
+<script src="dist/js/jsrsasign-all-min.js"></script>
+-->
+
+
 
 
 
@@ -448,6 +508,8 @@
 		if ($.isFunction(updatePage))
 			updatePage();
 	}, 3000);
+	
+	
 
 </script>
 

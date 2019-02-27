@@ -66,7 +66,7 @@ const maxDiffFromAppHeight = 30; // avg quote from proposer - how much differenc
 const fixedExponent = 1000000;
 let manualRevertTo = 0;
 
-let dbSyncThrottle = 1; //how many block per db dics sync
+let dbSyncThrottle = 20; //how many block per db dics sync
 let currentThrottleCounter = 0;
 
 var rpcHttpAgent = new http.Agent({
@@ -402,11 +402,14 @@ let indexProtocol = {
 								
 								if (acc){
 									
+									acc.pubKeyComp = secp256k1.publicKeyConvert( Buffer.from(acc.pubKey, 'hex'), true ).toString('hex');
+									/*
 									acc.pubKeyComp = crypto.ECDH.convertKey( Buffer.from(acc.pubKey, 'hex'),
 										'secp256k1',
 										'hex',
 										'hex',
 										'compressed');	
+									*/
 
 									indexProtocol.accountsStore[ a ] = acc;
 								}
@@ -957,6 +960,12 @@ let server = createServer({
 					if (data){
 						appState.accountStore.push( data.address );
 						
+						if (!data.pubKeyComp){
+							data.pubKeyComp = secp256k1.publicKeyConvert( Buffer.from(data.pubKey, 'hex'), true ).toString('hex');
+							
+							saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.' + data.pubKeyComp, value: data.address});
+						}
+						
 						//save to global lookup tbl
 						//@todo: check it't uniques
 						saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.' + data.pubKey, value: data.address});
@@ -1009,7 +1018,7 @@ let server = createServer({
 					}
 				});
 			}
-			
+
 			//save accounts 
 			_.each(indexProtocol.accountsStore, function(v, i){
 				saveOps.push({type: 'put', key: 'tbl.accounts.' + v.address, value: JSON.stringify( v )});
@@ -1357,14 +1366,17 @@ let server = createServer({
 							//add compressed public key 
 							//const 	ecdh 	= 	crypto.createECDH('secp256k1');
 							
-							account.pubKeyComp = crypto.ECDH.convertKey( Buffer.from(account.pubKey, 'hex'),
+							account.pubKeyComp = secp256k1.publicKeyConvert( Buffer.from(account.pubKey, 'hex'), true ).toString('hex');
+							
+							/*
+							crypto.ECDH.convertKey( Buffer.from(account.pubKey, 'hex'),
 								'secp256k1',
 								'hex',
 								'hex',
 								'compressed');
-								
-							//console.log('Uncompressed key: ' + 	account.pubKey);
-							//console.log('Compressed key: ' + 	account.pubKeyComp);
+							*/	
+							console.log('Uncompressed key: ' + 	account.pubKey);
+							console.log('Compressed key: ' + 	account.pubKeyComp);
 						}
 						
 						//fetch all data about assets 
@@ -1415,12 +1427,14 @@ let server = createServer({
 									//add compressed public key 
 									//const 	ecdh 	= 	crypto.createECDH('secp256k1');
 									
+									z.pubKeyComp = secp256k1.publicKeyConvert( Buffer.from(z.pubKey, 'hex'), true ).toString('hex');
+									/*
 									z.pubKeyComp = crypto.ECDH.convertKey( Buffer.from(z.pubKey, 'hex'),
                                         'secp256k1',
                                         'hex',
                                         'hex',
                                         'compressed');
-										
+									*/	
 									console.log('Uncompressed key: ' + 	z.pubKey);
 									console.log('Compressed key: ' + 	z.pubKeyComp);	
 								}
@@ -1593,41 +1607,119 @@ let server = createServer({
 			case 'NNM': {
 				console.log('REG: checkTx of register new alt-name(s) for existing address');
 				
-				console.dir( z, {depth:16});
+//console.dir( z, {depth:16});
 				
 				
 				let hash = z[1].toLowerCase(); 
 				let sign = z[2].toLowerCase(); 
-				let pubk = z[3].toLowerCase();
+				let pubk = z[3].toLowerCase(); //Compress key!!
 				let flags = z[4].toLowerCase();
 				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
 				
 				let data = JSON.parse( rawData );
 
-console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});				
+//console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});				
 				
-				/**
+				
 				//check base structure of tx: code:hash:sign:pubkey:flags:data
-				if (z.length != 6)		return { code: 1, log: txType + ': wrong tx length'};
-				if (!z[(z.length-1)]) 	return { code: 1, log: txType + ': empty data'}; 
-				if (!z[1])				return { code: 1, log: txType + ': wrong or empty hash'}; 
-				if (!z[3])				return { code: 1, log: txType + ': wrong public key'}; 
+				if (z.length != 6)		return { code: 0, log: txType + ': wrong tx length'};
+				if (!z[(z.length-1)]) 	return { code: 0, log: txType + ': empty data'}; 
+				if (!z[1])				return { code: 0, log: txType + ': wrong or empty hash'}; 
+				if (!z[3])				return { code: 0, log: txType + ': wrong public key'}; 
 				
-				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
-				**/
+				//let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
 				let _hash = sha256( rawData );
 				
 				var pubKey = z[3]; //.toLowerCase();
-console.log( 'hash: ' + _hash );				
+//console.log( 'hash: ' + _hash.toString('hex') );				
 				//check signature 
 				let checkSign = secp256k1.verify(_hash, Buffer.from(z[2], 'hex'), Buffer.from(pubKey, 'hex'));
 					
 				if (checkSign != true){
 					console.log('NNM: Invalid signature');
 					
-					return { code: 1, log: 'Invalid signature' };   
+					return { code: 0, log: 'Invalid signature' };   
 				}
+				
+				//check nonce and addresse
+				let acc = indexProtocol.accountsStore[ data.address ];
+					
+				if (!acc || acc.address !== data.address){
+					console.log('NNM: Invalid account at accountsStore');
+					
+					return { code: 0, log: 'Invalid account' };						
+				} 
+				
+				if (acc.nonce >= data.nonce){
+					console.log('NNM: Invalid account nonce');
+					
+					return { code: 0, log: 'Invalid account nonce' };
+				}
+								
+				return { code: 0 };
 			
+				break;
+			}
+			case 'MSG': {
+				console.log('MSG: checkTx of sending messages for existing address');
+				
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase(); //Compress key!!
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+
+//console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});				
+				
+				//check base structure of tx: code:hash:sign:pubkey:flags:data
+				if (z.length != 6)		return { code: 0, log: txType + ': wrong tx length'};
+				if (!z[(z.length-1)]) 	return { code: 0, log: txType + ': empty data'}; 
+				if (!z[1])				return { code: 0, log: txType + ': wrong or empty hash'}; 
+				if (!z[3])				return { code: 0, log: txType + ': wrong public key'}; 
+				
+				let _hash = sha256( rawData );
+				
+				var pubKey = z[3]; //.toLowerCase();
+//console.log( 'hash: ' + _hash.toString('hex') );				
+				//check signature 
+				let checkSign = secp256k1.verify(_hash, Buffer.from(z[2], 'hex'), Buffer.from(pubKey, 'hex'));
+					
+				if (checkSign != true){
+					console.log('MSG: Invalid signature');
+					
+					return { code: 0, log: 'Invalid signature' };   
+				}
+				
+				//check message length 
+				if (Buffer.byteLength(data.msg, 'utf8') > 8192){
+					console.log('MSG: Invalid message length, max.: 8192');
+					
+					return { code: 0, log: 'Invalid signature' };   
+				}
+				
+				if (!data.to || data.to.length < 1){
+					console.log('MSG: Invalid array of to');
+					
+					return { code: 0, log: 'Invalid recipients' };
+				}
+				
+				//check account-author 
+				let fromAddr = null;
+				
+				_.find(indexProtocol.accountsStore, function( acc ){
+					if (acc.pubKey === pubKey || acc.pubKeyComp === pubKey){
+						fromAddr = acc.address;
+						return true;
+					}
+				});
+				
+				if (!fromAddr)
+					return { code: 1, log: 'Invalid author\'s account' };
+				else
+					return { code: 0 };
 			
 				break;
 			}			
@@ -1798,8 +1890,11 @@ console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
 					
 					appState.accountStore.push( data.address );
 					
+					data.pubKeyComp = secp256k1.publicKeyConvert( Buffer.from(pubk, 'hex'), true ).toString('hex');
+					
 					//Save to systems accounts 
 					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.'+pubk, value: data.address});
+					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.'+data.pubKeyComp, value: data.address});
 					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.'+data.address, value: pubk});
 					saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.'+data.address, value: data.address});
 					saveOps.push({type: 'put', key: 'tbl.accounts.'+data.address, value:JSON.stringify( data )});
@@ -1828,52 +1923,245 @@ console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
 				
 				let hash = z[1].toLowerCase(); 
 				let sign = z[2].toLowerCase(); 
-				let pubk = z[3].toLowerCase();
+				let pubk = z[3].toLowerCase(); //Compress key!!! 
 				let flags = z[4].toLowerCase();
 				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
 				
 				let data = JSON.parse( rawData );
 
-console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
+//console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
 				
 				if (data){
 					
 					let _hash = sha256( rawData );
 					
-					if (_hash.toString('hex').toLowerCase() != hash){
+					if (_hash.toString('hex') != hash){
 						console.log('NNM: Invalid hash, compute and stored/signed');
 						
-						return { code: 1, log: 'Invalid hash' };
+						return { code: 0, log: 'Invalid hash' };
 					}
+					
+					let acc = indexProtocol.accountsStore[ data.address ];
+					
+					if (!acc || acc.address !== data.address){
+						console.log('NNM: Invalid account at accountsStore');
+						
+						return { code: 0, log: 'Invalid account' };						
+					} 
 			
-					let checkSign = secp256k1.verify(_hash, Buffer.from(sign, 'hex'), Buffer.from(pubk, 'hex'));
+					let checkSign = secp256k1.verify(_hash, Buffer.from(sign, 'hex'), Buffer.from(acc.pubKey, 'hex'));
 					
 					if (checkSign != true){
 						console.log('NNM: Invalid signature');
 						
-						return { code: 1, log: 'Invalid signature' };   
+						return { code: 0, log: 'Invalid signature' };   
 					}
 					
 					if (!data.address || !data.ids || data.ids.length < 1){
 						console.log('NNM: Invalid or empty address');
 						
-						return { code: 1, log: 'Invalid or empty address' };
+						return { code: 0, log: 'Invalid or empty address' };
 					}
 					
 					if (!data.nonce || data.nonce < 1){
 						console.log('NNM: Invalid nonce');
 						
-						return { code: 1, log: 'Invalid nonce' };
+						return { code: 0, log: 'Invalid nonce' };
 					}
 					
-					//Check forbidden names 
+					if (!acc || ( acc.pubKey !== pubk && acc.pubKeyComp !== pubk )){
+						console.log('NNM: Invalid account public key');
+						
+						return { code: 0, log: 'Invalid account public key' };						
+					} 
 					
+					if (acc.nonce >= data.nonce){
+						console.log('NNM: Invalid account nonce');
+						
+						return { code: 0, log: 'Invalid account nonce' };
+					}
 					
+					data.ids.forEach(function(_id){
+						if (acc.ids.indexOf( _id ) === -1){
+							//check forbidden
+							//@todo: check full domain restriction
+							if (appState.options.forbiddenIds.indexOf( _id ) === -1){
+							
+								indexProtocol.accountsStore[ acc.address ].ids.push( _id );
+							
+								saveOps.push({type: 'put', key: 'tbl.accounts.__lookup.' + _id, value: acc.address});
+							}
+						}
+					});
+
+					//@todo add work with txFee 
+					indexProtocol.accountsStore[ data.address ].nonce++;
+					
+					if (!indexProtocol.accountsStore[ data.address ].tx){
+						indexProtocol.accountsStore[ data.address ].tx = [];
+					}
+					
+					indexProtocol.accountsStore[ data.address ].tx.push( txHash );
+					
+					saveOps.push({type: 'put', key: 'tbl.accounts.' + acc.address, value: JSON.stringify( indexProtocol.accountsStore[ acc.address ] )});
+					
+					return { code: 0 }
 					
 				}
+				else	
+					return { code: 0, log: 'Invalid tx data' }
+			}	
+			case 'MSG': {
+				console.log('MSG: deliverTx of sending messages for existing address');
+				
+//console.dir( z, {depth:16});
+			
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase(); //Compress key!!
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+
+//console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});				
+				
+				//check base structure of tx: code:hash:sign:pubkey:flags:data
+				if (z.length != 6)		return { code: 0, log: txType + ': wrong tx length'};
+				if (!z[(z.length-1)]) 	return { code: 0, log: txType + ': empty data'}; 
+				if (!z[1])				return { code: 0, log: txType + ': wrong or empty hash'}; 
+				if (!z[3])				return { code: 0, log: txType + ': wrong public key'}; 
+				
+				let _hash = sha256( rawData );
+				
+				var pubKey = z[3]; //.toLowerCase();
+//console.log( 'hash: ' + _hash.toString('hex') );				
+				//check signature 
+				let checkSign = secp256k1.verify(_hash, Buffer.from(z[2], 'hex'), Buffer.from(pubKey, 'hex'));
 					
-				return { code: 0 }
-			}		
+				if (checkSign != true){
+					console.log('MSG: Invalid signature');
+					
+					return { code: 0, log: 'Invalid signature' };   
+				}
+				
+				//check message length 
+				if (Buffer.byteLength(data.msg, 'utf8') > 8192){
+					console.log('MSG: Invalid message length, max.: 8192');
+					
+					return { code: 0, log: 'Invalid signature' };   
+				}
+				
+				if (!data.to || data.to.length < 1){
+					console.log('MSG: Invalid array of to');
+					
+					return { code: 0, log: 'Invalid recipients' };
+				}
+				
+				//fetch account from storage 
+				return new Promise(function(resolve, reject){
+					//lookup table pubkey to address
+					//@todo: need to check all ids, name and use forbidden ids 
+					stateDb.get('tbl.accounts.__lookup.' + pubKey, function(err, val){
+						console.log('Check avalability of pubKey at lookup tbl.');
+					
+						if (!err && val){
+							if (Buffer.isBuffer(val)){
+								val = val.toString('utf8');								
+							}
+							
+							if (val && val != ''){
+								console.log('Author address exists: ' + val);
+								
+								let msg = {
+									author			: val,
+									authorPubKey	: pubKey,
+									
+									txHash			: txHash,
+									sign			: sign,
+									message			: data.msg,
+
+									blockHeight		: appState.blockHeight,
+									
+									ts		: new Date().getTime()  //No actual time		
+								};
+								
+								let asyncOpts = [];
+								
+								data.to.forEach(function(_id){
+									asyncOpts.push( function(cb){
+										
+										stateDb.get('tbl.accounts.__lookup.' + _id, function(err, addr){
+											console.log('Check avalability address of ' + _id);
+										
+											if (!err && addr && Buffer.isBuffer(addr)){
+												addr = addr.toString('utf8');
+
+												stateDb.get('tbl.accounts.' + addr, function(err, acc){
+													if (!err && acc && Buffer.isBuffer(acc)){
+														acc = JSON.parse( acc.toString('utf8') );
+
+														acc.data.messages.unshift( msg );
+														
+														//add tx 
+														if (!acc.tx)	acc.tx = [];
+														
+														acc.tx.push( txHash );
+														
+														if (!indexProtocol.accountsStore[ acc.address ])
+															indexProtocol.accountsStore[ acc.address ] = acc;
+														else{
+															if (!indexProtocol.accountsStore[ acc.address ].tx)
+																indexProtocol.accountsStore[ acc.address ].tx = [];
+															
+															indexProtocol.accountsStore[ acc.address ].tx.push( txHash );
+															indexProtocol.accountsStore[ acc.address ].data.messages.unshift( msg );
+														}
+														
+														saveOps.push({type: 'put', key: 'tbl.accounts.' + acc.address, value: JSON.stringify(indexProtocol.accountsStore[ acc.address ])});
+														
+														cb(null);														
+													}
+													else
+														cb(null);
+												});												
+											}
+											else
+												cb(null);
+										});	
+										
+									} );
+								});
+								
+								if (asyncOpts.length > 0){
+									async.series( asyncOpts /*, 2*/, function(err, results){
+										
+										if (!indexProtocol.accountsStore[ val ].tx)
+											indexProtocol.accountsStore[ val ].tx = [];
+										
+										//modify author account 
+										indexProtocol.accountsStore[ val ].tx.push( txHash );
+										indexProtocol.accountsStore[ val ].nonce++;
+										
+										saveOps.push({type: 'put', key: 'tbl.accounts.' + val, value: JSON.stringify(indexProtocol.accountsStore[ val ])});
+										
+										return resolve( {code: 0} );
+									} );
+								}
+								else 
+									return resolve( {code: 0, log: 'Nothing to do'} );
+							}
+							else							
+								return resolve( {code: 0, log: 'No author address'} );
+						}
+						else
+							return resolve( {code: 0, log: 'No address associate with'} );
+						
+					});
+				});
+				
+				break;
+			}
 			
 			default: {	//DEBUG
 				return { code: 0, log: 'Unknown tx type' };

@@ -8,23 +8,27 @@
 		instances: 1,
 		autorestart: true,
 		watch: false,
-		max_memory_restart: '1G',
+		max_memory_restart: '2G',
 		source_map_support: false,
 		log:	'/var/log/testent.log',
 		combine_logs: true,
 		wait_ready: true,
+		
+		//exec_interpreter: 'node',
+		
 		force: false
-	}
+	},
   
-	/**{
+	{
 		name: 'testnet',
 		script: '/opt/tendermint/app/indexapp.js',
-
+		
+		max_restarts: 525600, //1Y uptime
 		args: '',
 		instances: 1,
 		autorestart: true,
 		watch: false,
-		max_memory_restart: '1G',
+		max_memory_restart: '2G',
 		source_map_support: false,
 		log:	'/var/log/testent.log',
 		combine_logs: true,
@@ -47,12 +51,38 @@
 		log:	'/var/log/tendermint.log',
 
 		combine_logs: true,
+		
+		max_restarts: 525600, //1Y uptime
 			
 		pid_file: '/var/run/tendermint.pid',
 
 		wait_ready: false,
 		force: false
-	} ,
+	},
+	
+	{
+		name: 'tlight',
+		script: '/opt/tendermint-lite/tendermint',
+
+		args: ' lite --chain-id=indx-testnet-01 --node=tcp://127.0.0.1:26657', //moniker
+		instances: 1,
+		autorestart: true,
+		watch: false,
+		max_memory_restart: '2G',
+		source_map_support: false,
+
+		//error_file: '/var/log/tendermint.error.log',
+		log:	'/var/log/tendermint-lite.log',
+
+		combine_logs: true,
+		
+		max_restarts: 525600, //1Y uptime
+			
+		pid_file: '/var/run/tendermint-lite.pid',
+
+		wait_ready: false,
+		force: false
+	},
 
 	{
 		name: 'datafeed',
@@ -74,6 +104,6 @@
 
 		wait_ready: false,
 		force: false
-	} **/
+	}
   ]
 }

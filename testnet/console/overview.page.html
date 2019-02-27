@@ -7,7 +7,7 @@
 	var height = 0;
 	
 	function updatePage(){
-		$.getJSON('https://rpc.testnet.indexprotocol.online/status', function(res){
+		$.getJSON(indexProtocol.networkURI + '/status', function(res){
 			let obj = res.result;
 			
 			var el = $('.content');
@@ -31,7 +31,7 @@
 			indexProtocol.height = _height;
 			
 			//fetch last blocks
-			$.getJSON('https://rpc.testnet.indexprotocol.online/blockchain?minHeight=' + (indexProtocol.height - 20), function(res){
+			$.getJSON(indexProtocol.networkURI + '/blockchain?minHeight=' + (indexProtocol.height - 20), function(res){
 				var obj = res.result;
 				var tmp = '';
 				

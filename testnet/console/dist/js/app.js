@@ -89,37 +89,160 @@ $(function () {
 	
 	_timer: null,	
 	height: null,
+	
+	//check key (as hex string)
+	privateKeyVerify: function( key ){
+		return window.Secp256k1.privateKeyVerify( Buf( key) );
+	}, 
+	
+	getPublicKey: function( key, compress ){
+		let _compress = true; 
+		
+		if (compress === false)	_compress = false;
+				
+		return window.Secp256k1.publicKeyCreate( Buf(key ), _compress );
+	},
+	
+	publicKeyVerify: function( key ){
+		return window.Secp256k1.publicKeyVerify( Buf( key ) );
+	},
+	
+	sha256: function( data ){
+		return window.sha256( data );
+	},
+	
+	sign: function( msg, key ){
+		let hash = this.sha256( msg );
+		
+		if (hash)
+			return this.signHash( hash, Buf(key)).signature; //.toString('hex');		
+		else
+			throw Error('Invalid Sha256 of message');
+	}, 
+	
+	signHash: function( hash, key ){
+		return window.Secp256k1.sign( hash, Buf(key)).signature; //.toString('hex');
+	},
+	
+	sendTx: function( code, privateKey, txData, broadcastType, callback ){
+		if (!code || !privateKey || !txData)
+			return false;
+		
+		if (!this.privateKeyVerify( privateKey ))
+			return false;    
+		
+		if (!broadcastType)
+			broadcastType = 'async';
+		
+		if (['async', 'commit', 'sync'].indexOf( broadcastType ) === -1){
+			broadcastType = 'async';
+		}
+		
+		
+		let data = JSON.stringify( txData );
+		let hash = this.sha256( data );
+		let pubKey = this.getPublicKey( privateKey, true );
+		
+		if (!this.publicKeyVerify( pubKey ))
+			return false;
+		
+		let sign = this.signHash( hash, privateKey );
+		
+		//code:hash:sign:pubkey:flags:data
+		let tx = code.toLowerCase() + ':' + hash.toString('hex') + ':' + sign.toString('hex') + ':' + pubKey.toString('hex') + 
+			'::' + window.btoa( data );
+			
+		console.log('Tx Debug: ' + tx);
+		
+		let txHash = this.sha256( tx );
+		
+		//doQuery 
+		$.getJSON(indexProtocol.networkURI + '/broadcast_tx_'+broadcastType+'?tx="'+tx+'"&_='+new Date().getTime(), 
+			function(res, textStatus){
+				if (!res || !res.result)
+					return;
+					
+				if (res && res.result && res.result.hash && res.result.code == 0){
+					//all OK 
+					if (_.isFunction(callback))
+						callback( res.result.hash );
+				}
+		});
+		
+		
+		return txHash.toString('hex');
+	},
+	
+	//Universal dialog to send message 
+	sendMessageDialog: function(to){
+		var el = $('#send-message-dialog');	
+		
+		if (to){
+			el.find('#my-message-to').val( to );
+		}
+		
+		el.find('.btnSendTx').unbind('click').click(function(e){
+			var to 		= el.find('#my-message-to').val();
+			var body 	= el.find('#my-message-text').val();
+			var pKey 	= el.find('.my-private-key').val();
+			
+			//tester01
+			if (!pKey) pKey = '71a818282b4288c9db7eaf7ed0a2f3ba992796815442c0e0c753095dac155f28'; //return false;
+			
+//console.log([ to, body, pKey ]);
+			
+			if (!to || !body || !pKey)  
+				return;
+			
+			if (body.length > 8192){
+				body = body.substring(0, 8191);
+			}
+			
+			//if to includes ';' - it's list of ids
+						
+			let obj = {
+				to				: to.split(';'),
+				msg				: body
+			};
+
+			el.find('.btnSendTx').attr('disabled', 'disabled');
+			
+			let txResult = indexProtocol.sendTx( 'msg', pKey, obj, 'async', function(txHash){
+				if (!txHash) return;
+				
+				//All OK 			
+				el.modal('hide');
+				
+				var _uid = _.uniqueId('notify-');
+				//add notify 
+				$('.notifyBlock').empty().html(
+				'<div class="alert alert-success alert-dismissible" id="'+_uid+'">' +
+				'<button type="button" class="close" data-dismiss="alert" aria-hidden="true">×</button><h4><i class="icon fa fa-check"></i> Tx successful</h4>Your tx success added to mempool of chain node. TxHash: <a href"#">'+txHash+'</a></div>');
+				
+				setTimeout(function(){
+					$('.notifyBlock').find('#' + _uid).remove();   
+				}, 5000);
+					
+				el.find('.btnSendTx').removeAttr('disabled'); 
+				
+				el.find('#my-message-to').val('');
+				el.find('#my-message-text').val('');
+				el.find('.my-private-key').val('');				
+			});
+			
+			if (txResult === false){
+				alert('Unrecoverable error at send Tx');
+			}
+					
+		});
+	
+		el.modal('show');
+	},
+	
+	sendMessageTo: function( to ){},
+	
 	 
-	/**
-	sha256: function(str){
-	  // Get the string as arraybuffer.
-	  var buffer = new TextEncoder("utf-8").encode(str);
-	  
-	  return crypto.subtle.digest({name:"SHA-256"}, buffer).then(function(hash){
-		return hash;
-	  })
-	},
-	**/
-/**
-	hex: function(buffer) {
-	  var digest = ''
-	  var view = new DataView(buffer)
-	  for(var i = 0; i < view.byteLength; i += 4) {
-		// We use getUint32 to reduce the number of iterations (notice the `i += 4`)
-		var value = view.getUint32(i)
-		// toString(16) will transform the integer into the corresponding hex string
-		// but will remove any initial "0"
-		var stringValue = value.toString(16)
-		// One Uint32 element is 4 bytes or 8 hex chars (it would also work with 4
-		// chars for Uint16 and 2 chars for Uint8)
-		var padding = '00000000'
-		var paddedValue = (padding + stringValue).slice(-padding.length)
-		digest += paddedValue
-	  }
-	  
-	  return diges;
-	},
-**/	
+	
 	totalNodesBytes: 0,
 	
 	nodeCodes: {

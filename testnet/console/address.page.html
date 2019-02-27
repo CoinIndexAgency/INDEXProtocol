@@ -61,9 +61,9 @@
 				
 				if (!obj) return; 
 				
-				console.log('Account info for address ' + address);
-				console.log( obj );
-				
+console.log('Account info for address ' + address);
+console.log( obj );
+				 
 				let createdheight = '';
 				
 				if (obj.createdBlockHeight == 0){ //account from Genesis block
@@ -83,19 +83,30 @@
 				}
 				else
 					_type = obj.type;
+					
+				let _name = '<div>'+obj.name;
 				
+				if (obj.ids.length > 0){
+					obj.ids.forEach(function(_id){
+						_name = _name + '<br />' + _id;      
+					});
+				}
 				
+				_name = _name + '</div>'; 
+				
+				///*obj.name+' (+'+obj.ids.length+' alts.)
 				let z = '';				
 					z = '<td>'+createdheight+'</td>' + 
 						'<td>'+obj.pubKeyComp+'</td>' + 
-						'<td>'+obj.name+' (+'+obj.ids.length+' alts.)</td>' + 
+						'<td>'+_name+'</td>' + 
 						'<td>'+_type+'</td>' + 
 						'<td>'+obj.nonce+'</td>';
 			
 				$('.content').find('#address-tbl').empty().html( '<tr align="center">' + z + '</tr>' );
 				
-				curAccount.address 	= address;
-				curAccount.nonce 	= obj.nonce;
+				curAccount = obj; 
+				//.address 	= address;
+				//curAccount.nonce 	= obj.nonce;
 				
 				//prepare assets 
 				let aTbl = '';
@@ -121,9 +132,28 @@
 					
 					aTbl = aTbl + '<tr align="center">' + x + '</tr>';
 				});
-				
+								
 				$('.content').find('#account-assets-tbl').empty().html( aTbl );
 				
+				//prepare messages 
+				let mTbl = '';
+				
+				_.each(obj.data.messages, function(v){
+					if (!v || !v.blockHeight) return;
+					 
+					let proof = '<a href="#" style="text-decoration: none;color:green;" title="Author\'s public key and signature verifyied"><i class="fas fa-shield-alt"></i></a>';
+					
+					let x = '';
+						x = '<td>' + moment.unix(v.ts).format('DD.MM.YYYY <br />HH:mm ss') + '</td>' + 
+							'<td><b>#' + v.blockHeight + '</b></td>' + 
+							'<td>' + v.message + '</td>' + 
+							'<td><a href="javascript: void indexProtocol.addressPage(\''+v.author+'\');" title="Issuer address: '+v.author+'">' + v.author + '</td>' + 
+							'<td>' + proof + '</td>';
+					
+					mTbl = mTbl + '<tr align="center">' + x + '</tr>';
+				});
+								
+				$('.content').find('#account-messages-tbl').empty().html( mTbl );
 			
 			
 			
@@ -145,100 +175,44 @@
 			//tester01
 			if (!pKey) pKey = '71a818282b4288c9db7eaf7ed0a2f3ba992796815442c0e0c753095dac155f28'; //return false;
 			
-			//check pKey 
-			var curve = window.Secp256k1;
-			var privKey = curve.uint256(pKey, 16); //as Bn
-			
-			if (privKey){
-			
-				var pn = curve.generatePublicKeyFromPrivateKeyData( privKey );
-				
-				//console.log( points );
-				//let x = curve.uint256( pn.x, 16 );
-				if (!curve.isValidPoint(curve.uint256( pn.x, 16 ), curve.uint256( pn.y, 16 ))){
-					alert('Invalid Secp256k1 point');
-					return;
-				}
-				
-				//generate pub key, uncompressed
-				var pubKey = '04' + pn.x + pn.y;
-				
-				var obj = {
-					ids			: [name],
-					pubKey		: pubKey,
-					address		: curAccount.address,
-					nonce		: curAccount.nonce + 1
-				};
-				
-				var objJson = JSON.stringify( obj );
-				
-				var objHash = CryptoJS.SHA256(  ).toString();
-				
-				//sign hash 
-				var _rawSig = curve.ecsign( curve.uint256( objHash, 16 ), privKey );
-				var	sign = _rawSig.r + _rawSig.s;
-				
-console.log( sign );
-				
-				//code:hash:sign:pubkey:flags:data
-				var tx = 'nnm:' + objHash + ':' + sign + ':' + pubKey + '::' + window.btoa( objJson );
-				
-console.log('All sounds GOOD!');
-console.log('Tx: ' + tx);
+			let obj = {
+				ids			: [name],
+				address		: curAccount.address,
+				nonce		: curAccount.nonce + 1
+			};
 
-				el.find('.btnSendTx').attr('disabled', 'disabled');
-
-				$.getJSON(indexProtocol.networkURI + '/broadcast_tx_async?tx="'+tx+'"&_=' + new Date().getTime(), function(res){
-console.log( res );
+			el.find('.btnSendTx').attr('disabled', 'disabled');
+			
+			let txResult = indexProtocol.sendTx( 'nnm', pKey, obj, 'async', function(txHash){
+				if (!txHash) return;
 				
-					if (!res || !res.result)
-						return;
+				//All OK 
+				curAccount.nonce++;
+				
+				$('#add-new-altname-dialog').modal('hide');
+				
+				var _uid = _.uniqueId('notify-');
+				//add notify 
+				$('.notifyBlock').empty().html(
+				'<div class="alert alert-success alert-dismissible" id="'+_uid+'">' +
+				'<button type="button" class="close" data-dismiss="alert" aria-hidden="true">×</button><h4><i class="icon fa fa-check"></i> Tx successful</h4>Your tx success added to mempool of chain node. TxHash: <a href"#">'+txHash+'</a></div>');
+				
+				setTimeout(function(){
+					$('.notifyBlock').find('#' + _uid).remove();
+				}, 5000);
 					
-					if (res && res.result && res.result.hash && res.result.code == 0){
-						
-						//All OK 
-						$('#add-new-altname-dialog').modal('hide');
-						
-						var _uid = _.uniqueId('notify-');
-						//add notify 
-						$('.notifyBlock').empty().html(
-						'<div class="alert alert-success alert-dismissible" id="'+_uid+'">' +
-						'<button type="button" class="close" data-dismiss="alert" aria-hidden="true">×</button><h4><i class="icon fa fa-check"></i> Tx successful</h4>Your tx success added to mempool of chain node. TxHash: <a href"#">'+res.result.hash+'</a></div>');
-						
-						setTimeout(function(){
-							$('.notifyBlock').find('#' + _uid).remove();
-						}, 5000);
-						    
-						
-						
-					}
-				
-				
-				});
-				
-				
+				el.find('.btnSendTx').removeAttr('disabled'); 
+			});
 			
+			if (txResult === false){
+				alert('Unrecoverable error at send Tx');
 			}
-			
-			/**
-			indexProtocol.sha256('test').then(function(digest){
-			  console.log(digest.toString());
-			}); **/
-			
-		//	console.log( [name, pk] );
+
 			
 		});
-
-		
-		
-		//var rpk = window.crypto.
-		//	el.find(
-	
-	
 	
 		el.modal('show');
 	}
-	
 	
 </script>
 
@@ -329,7 +303,7 @@ console.log( res );
 	
 	
 	
-	<div class="row">
+  <div class="row">
 	<div class="col-md-12">
 		<!-- TABLE: LATEST ORDERS -->
 	  <div class="box box-info"> 
@@ -348,11 +322,11 @@ console.log( res );
 				<a href="javascript: void;" class="btn btn-primary btn-sm" style="font-size:16px;">
 					<i class="fas fa-arrow-up"></i> Tranfser asset <b>FROM</b> this address
 				</a>
-				
+				  
 				&nbsp;&nbsp;&nbsp;
 				
-				<a href="javascript: void;" class="btn btn-default btn-sm" style="font-size:16px;">
-					<i class="far fa-envelope"></i> Send <b>message</b> 
+				<a href="javascript: void indexProtocol.sendMessageDialog('<?php echo strval( $_GET['address'] ); ?>');" class="btn btn-default btn-sm" style="font-size:16px;">
+					<i class="far fa-envelope"></i> Send <b>message</b>  
 				</a>
 				
 				&nbsp;&nbsp;&nbsp;
@@ -375,8 +349,6 @@ console.log( res );
   </div>
   <!-- /.row -->
   
-  
-  
   <div class="row">
 	<div class="col-md-12">
 		<!-- TABLE: LATEST ORDERS -->
@@ -393,7 +365,7 @@ console.log( res );
 			  <tr align="center" style="text-align:center;">
 			    <th style="text-align:center;">Height</th>
 				<th style="text-align:center;">Public Key (compressed)</th>
-				<th style="text-align:center;">Name</th>
+				<th style="text-align:center;">Names</th>
 				<th style="text-align:center;">Type</th>
 				<th style="text-align:center;">Tx</th>
 			  </tr>
@@ -480,19 +452,21 @@ console.log( res );
 				<table class="table no-margin">
 				  <thead>
 				  <tr align="center" style="text-align:center;">
-					<th style="text-align:center;" colspan="2">Message</th>
-					<th style="text-align:center;background-color:#f4f4f4;" colspan="1">From</th>
+					<th style="text-align:center;" colspan="3">Message</th>
+					<th style="text-align:center;background-color:#f4f4f4;" colspan="2">From</th>
 				  </tr>
 				  
 				  
 				  <tr align="center" style="text-align:center;">
 					<th style="text-align:center;">Date</th>
+					<th style="text-align:center;">Height</th>
 					<th style="text-align:center;">Message body</th>
 					
-					<th style="text-align:center;">Name</th>					
+					<th style="text-align:center;">Author</th>	
+					<th style="text-align:center;">Proof</th>					
 				  </tr>
 				  </thead>
-				  <tbody id="account-assets-tbl">
+				  <tbody id="account-messages-tbl">
 					
 				  </tbody>
 				</table>

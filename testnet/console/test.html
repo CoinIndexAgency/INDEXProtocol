@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+	
+	<!-- <script src="dist/js/elliptic.js"></script> -->
+	
+	<script src="dist/js/secp256k1-browserify.js"></script>
+	<script src="dist/js/bn.js"></script>
+  </head>
+  <body>
+    
+  </body>
+  
+
+
+<script>
+	function uint256(x, base) {
+        return new BN(x, base)
+    };
+
+
+
+
+	let msg = 'test';
+	let privKey = '71a818282b4288c9db7eaf7ed0a2f3ba992796815442c0e0c753095dac155f28';
+
+	const secp256k1 = window.Secp256k1;
+	
+	console.log( secp256k1 );
+	
+let pkv = secp256k1.privateKeyVerify( Buf(privKey) );	
+
+	console.log( pkv );
+	
+	let hash = sha256( msg );
+	
+	console.log( hash );
+	
+	console.log( hash.toString('hex') );
+	
+let sign = secp256k1.sign(hash, Buf(privKey));
+ 
+	console.log( sign );
+	
+	console.log('Signature: ' + sign.signature.toString('hex') );
+	
+let pubKey = secp256k1.publicKeyCreate( Buf(privKey), true );
+
+	console.log( pubKey );
+	console.log( pubKey.toString('hex') );
+	
+	
+
+/**	
+	const ec = new elliptic.ec('secp256k1');
+		
+console.log( ec );	
+	
+	var hash = ec.hash( msg ); //short of sha256
+		  
+console.log( hash ); 
+
+	var key = ec.keyFromPrivate(privKey, 'hex');
+
+console.log( key );		
+
+	var signature = ec.sign(msg, privKey, 'hex');
+		
+console.log( signature );	
+
+	var signDER = signature.toDER('hex');
+	
+console.log( signDER );	
+**/		
+/***		
+		
+		let md = new KJUR.crypto.MessageDigest({alg: "sha256", prov: "sjcl"});
+		
+			md.updateString( msg );
+		var mdHex = md.digest();
+		
+console.log( 'Hash: ' + mdHex );
+		
+		//let keyObj = KEYUTIL.getKey(privKey, null, "pkcs5prv");
+
+//console.log( keyObj );
+		
+		let sig = new KJUR.crypto.Signature({'alg':'SHA256withECDSA'});
+			sig.init( privKey );
+**/
+		
+	
+/**	
+	
+	
+	function zzz(){
+		var msg = 'test';
+		var hash = CryptoJS.SHA256( msg ).toString(); 
+		
+		let privKey = Secp256k1.uint256('71a818282b4288c9db7eaf7ed0a2f3ba992796815442c0e0c753095dac155f28', 16);
+		
+		console.log( privKey.toString('hex') );
+
+		let pub = Secp256k1.generatePublicKeyFromPrivateKeyData( privKey );
+
+console.log( pub ); 	
+	
+		var _rawSig = Secp256k1.ecsign( Secp256k1.uint256( hash, 16 ), privKey );
+		
+console.dir( _rawSig, {depth:16} );    
+		
+		
+		//var	sign = _rawSig.r + _rawSig.s;
+		
+		//console.log('Hash: ' + hash);
+		//console.log('Sign: ' + sign);
+		
+		
+		
+/***		
+		const ec = new elliptic.ec('secp256k1');
+		
+//console.log( ec );	
+		
+		  
+		
+//console.log( hash ); 	
+
+		var hash2 = ec.hash( msg ); //short of sha256 
+		
+////onsole.log( hash2 ); 	
+
+		//console.log( ec.keyFromPrivate );
+
+		var key = ec.keyFromPrivate( '71a818282b4288c9db7eaf7ed0a2f3ba992796815442c0e0c753095dac155f28', 'hex' ); 
+		
+		var pubk = key.getPublic('hex');   
+		//console.log( pubk ); 
+		
+		var signature = ec.sign('test', key, 'hex', { canonical: true });
+		
+		//console.log( [ signature.toDER('hex'), signature.r.toString('hex'), signature.s.toString('hex') ] ); 
+		
+		console.log('signDER: ' + signature.toDER('hex'));
+		   
+		//console.log( key.inspect() ); 
+		
+	
+		const curve = window.Secp256k1;		
+		var msg = 'test';
+		var hash = CryptoJS.SHA256( msg ).toString();   
+		
+console.log( hash ); 		
+**/		
+		
+		
+	
+
+
+
+
+</script>
+</html>
