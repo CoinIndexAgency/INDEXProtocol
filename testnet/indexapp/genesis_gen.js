@@ -26,6 +26,7 @@ var genesisAppState = {
 		'addressPrefix'				: 'indxt', //prefix fro all addresses (INDX-Test)
 		'forbiddenIds'				: [
 			'@indexprotocol.ltd', 
+			'indx*',
 			'emitent@indexprotocol.network', 
 			'info@indexprotocol.network', 
 			'token@indexprotocol.network', 
@@ -85,10 +86,11 @@ _.each(genesis.validators, function(v){
 		type				: 'node',
 		nonce				: 0, //count tx from this acc
 		data				: {
-			assets				: [],
-			messages			: ['This is a test'],
+			assets				: {},
+			messages			: [],
 			storage				: []
 		},
+		tx					: [], //@todo: separate with in/out tx, maybe?
 		pubKey				: pubKey.toString('hex')
 	};
 
@@ -153,8 +155,7 @@ var _devAccounts = {
 	
 	'indexprotocol'		: 'bf135aba2110926c205f28865181c287d2b8304574d8737bcf87ced2aa6199dc',
 	'indx.exchange'		: '284f95b176836013a7e344690f1f428bb46a107c3029fe81dc6f30b5f0f7e3d7',
-	'openfxmarket'		: '5dc6101928ef5afbf1e6cc90c134efb1c04f9a6ac99658b7fd396f9d00dd077a',
-	
+	'openfxmarket'		: '5dc6101928ef5afbf1e6cc90c134efb1c04f9a6ac99658b7fd396f9d00dd077a'	
 	
 };
 
@@ -188,10 +189,11 @@ _.each(_devAccounts, function(p, v){
 		type				: 'user',
 		nonce				: 0, //count tx from this acc
 		data				: {
-			assets				: [],
-			messages			: ['This is a test'],
-			storage				: []
+			assets				: {},
+			messages			: [],
+			storage				: {}
 		},
+		tx					:[],
 		pubKey				: pubKey.toString('hex')
 	};
 
@@ -213,15 +215,21 @@ _.each(_devAccounts, function(p, v){
 genesisAppState.assets.push({
 	symbol				: 'IDX',
 	dividedSymbol		: 'mIDX', //symbol for divided assets
-	type				: 'coin', //coin for native coin, token for user assets, contract - for derivative
+	type				: 'coin', //coin for native coin, token for user assets, contract - for derivative, index - for index
 	family				: 'FX',
 	standart			: 'IDX20', //reserved for standart class realization
 	
 	name				: 'IndexCoin',
-	desc				: 'Native coin of INDEXProtocol Network',
+	desc				: 'Native coin of INDEXProtocol Network', 
+	
+	//for index and contract - required
+	spec				: '', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
 	
 	underlayerSymbol	: '', //for contract - base asset 
 	divider				: 1000, //possible: 1, 10, 100, 1000, 10000, 100000, 1000000
+	
+	txFeePaymentBy		: 'IDX', //symbol for pay any fee
 	txFee				: 1, //default fee, payed for validators 
 	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
 	
@@ -232,6 +240,13 @@ genesisAppState.assets.push({
 	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
 	
 	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	dataUpdatesFreq		: 'rt', //data updating declared
 	
 	emission			: {
 		initial			: 	_devAddr.length * genesisAppState.options.initialNativeCoinBalance,
@@ -261,15 +276,6 @@ genesisAppState.assets.push({
 	holders	: {},  //map of all holders (address => amount)
 		
 	tx		: [] //array of all tx with this coin (to be disscuss)
-
-	
-//	genesisBlockHeight	: 0,
-//	initial				: genesisAppState.accounts.length * genesisAppState.options.initialNativeCoinBalance,
-	//allows				: ['transfer', 'hold', 'burn', 'buy', 'sell', 'loan', 'payment', 'exchanged'],
-	//divider				: 1000,
-//	maxSupply			: Math.trunc( 9007199254740991 / 1000 ),
-//	emission			: genesisAppState.options.rewardPerBlock, //emission per block
-	//owner				: 'emitent@indexprotocol.network', //address of emiten - FORBIDDEN IDS
 });
 
 //add initial distribution 

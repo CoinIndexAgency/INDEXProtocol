@@ -2,7 +2,6 @@
 
 let createServer 	= require('js-abci');
 const crypto 		= require('crypto');
-//const { spawn } 	= require('child_process');
 const fs			= require('fs');
 const _				= require('underscore');
 const emitter		= require('events');
@@ -202,27 +201,12 @@ let indexProtocol = {
 		rpcHealth: false, //check if local rpc up
 	},
 	
+	txQueue: [], //queue to send at Commmit msg
+	
 	accountsStore : {}, //local in-memory account storage 
-/**	
-		'MCPqykgZUJPb72vC9kgPRC6vvZm' : {
-			ids					:['MCPqykgZUJPb72vC9kgPRC6vvZm', 'token@indexprotocol.network', 'token@indexprotocol.online','indx.coin@indexprotocol.network'], 	//array of any string-based ids (global uniq!) associate with account
-			name				: 'token@indexprotocol.network',		//main name, if associated		
-			address				: 'MCPqykgZUJPb72vC9kgPRC6vvZm',
-			createdBlockHeight	: 1,
-			updatedBlockHeight  : 1,
-			type				: 'system',
-			nonce				: 0, //count tx from this acc
-			data				: {
-				assets				: [
-					{ symbol : 'INDX', amount: 9007199254740991, nonce: 0 }
-				],
-				messages			: [],
-				storage				: []
-			},
-			pubKey				: '04145da5f0ec89ffd9c8e47758e922d26b472d9e81327e16e649ab78f5ab259977756ceb5338dd0eddcff8633043b53b25b877b79f28f1d70f9b837ffaca315179'
-		}
-	}, 
-**/	
+	
+	indexValuesHistory: {}, //store latest data, for each registerd asset index
+	
 	//@todo: maybe store it at rocksDb? 
 	//local storage of latest uncomitted avg quotes
 	//store latest N 
@@ -247,14 +231,26 @@ let indexProtocol = {
 						
 			//some of settings overall all chain
 			//Megre with Genesis.json data at initChain
-			'options'		: {},
+			'options'		: {
+				'indicesFreq'	: {
+					'rt'	:	1, 
+					'1min'  :	20,
+					'5min'  :	100,
+					'15min' :	300,
+					'1h'    :	1200,
+					'3h'	:	3600, 
+					'12h'	:	14400,
+					'eod'	:	null,	//@todo realize it
+					'eow'	: 	null	//@todo realize it
+				},
+				
+				historyPoints: 32768  // indexValuesHistory
+			},
 			
 			'dataSource': {},
 			
 			'validatorStore':{}, //state of validators balances, emission of each block. Balances ONLY at nativeSymbol
-			
-			// !!!!!!!!!!! prototype 
-			//@todo: replace as user storages
+
 			'assetStore'	:	{}, //symbols registry DB
 			
 			//simple accounts store, only address
@@ -403,6 +399,9 @@ let indexProtocol = {
 								if (acc){
 									
 									acc.pubKeyComp = secp256k1.publicKeyConvert( Buffer.from(acc.pubKey, 'hex'), true ).toString('hex');
+									
+									if (!acc.tx)
+										acc.tx = [];
 									/*
 									acc.pubKeyComp = crypto.ECDH.convertKey( Buffer.from(acc.pubKey, 'hex'),
 										'secp256k1',
@@ -514,52 +513,6 @@ let indexProtocol = {
 		}).on('close', function(e){
 			console.log('Tendermint connection close!');
 		});
-	},
-	
-	/**
-	//fetch pubKey from accounts base 
-	pubKeyFrom: function( id ){
-		if (!id) return false;
-		
-		//id:  address, name, any from altnames
-		if (appState.accountStore[ id ])
-			return appState.accountStore[ id ].pubKey;
-		
-		var _pubKey = null; 
-		
-		_.find(appState.accountStore, function(v){
-			if (v.name == id){
-				_pubKey = v.pubKey;
-				
-				return true;
-			}
-		});
-		
-		if (_pubKey)
-			return _pubKey;
-		else
-			return false;		
-	},
-	**/
-	
-	//need to replace !
-	getAddressBy: function( id ){
-		if (!id) return false;
-		
-		if (appState.accountStore[ id ] && appState.accountStore[ id ].address == id)
-			return id;
-		
-		var address = false; 
-		
-		_.find(appState.accountStore, function(v){
-			if (v.name == id || v.address == id || v.pubKey == id) {
-				address = v.address;
-				
-				return true;
-			}
-		});
-		
-		return address;		
 	},
 	
 	blockCommitHandler: function(height){
@@ -736,9 +689,7 @@ let indexProtocol = {
 				if (v && v.exec){
 					if (v.exec == 'tbl.system.rewards')
 						indexProtocol.processValidatorsBlockReward( v, height );
-					else
-					if (v.exec == 'tbl.tx.transfer')
-						indexProtocol.processTransfer( v );
+					
 				}
 			});
 			
@@ -803,6 +754,7 @@ let indexProtocol = {
 		if (!data) return false;
 //console.dir( data );		
 		let _code = 'avg'; //type of TX, prefix
+		
 		//using deterministic stringify
 		let json  = JSON.stringify( data ); 
 		//use gzip?
@@ -812,78 +764,201 @@ let indexProtocol = {
 		//todo: Add sign with private key of me (Validator)
 		//store at tx as separated part (code:hash:signature:pubkey:flags:txbody)			
 		let tx = _code + ':' + _hash + '::::' + Buffer.from(json, 'utf8').toString('base64');
-//console.dir( tx );		
-		return tx;		
+//console.dir( tx );
+
+		indexProtocol.txQueue.push( tx );		
+
+		//====
+		//adding to local store for index token 
+		let q = {
+				id		: 0,
+				symbol	: 'BTCUSD_COININDEX',
+				asset	: 'BTC',
+				cur		: 'USD',
+				type	: 'IND', //index
+				side	: '',
+				ts		: appState.blockTime,
+				excode	: 'coinindex',
+				amount	: 1000000,
+				total	: 0,
+				price	: data.avgPrice
+		};
+					
+		let qhash = sha256( JSON.stringify(q) );
+					
+		let sign = secp256k1.sign(qhash, Buffer.from(nodePrivKey.privKey, 'hex')).signature.toString('hex');
+					
+		let tx = 'aiv:' + qhash.toString('hex') + ':' + sign + ':' + nodePrivKey.pubKey +':'+appState.blockHeight+':' + Buffer.from( JSON.stringify( {symbol: q.symbol, data: q} ), 'utf8').toString('base64');
+					
+		indexProtocol.txQueue.push( tx );	
+		
+				
+		
+		//return tx;		
+	},
+
+	
+	//TEST: check stored index and prepare tx for index tokens
+	updateIndexTokens: function(){
+		let it = []; 
+		
+		//check availables index tokens 
+		_.each(appState.assetStore, function(v){
+			if (v.type == 'index' && v.family == 'IND' && v.standart == 'IDX42'){
+				it.push( v );
+			}
+		});
+		
+		//run it 
+		it.forEach(function(v){
+			let data = null; 
+			/**
+			if (v.symbol == 'BTCUSD_COININDEX'){
+				data = indexProtocol.lastAvg.avgPrice;
+			}
+			else **/
+			if (v.symbol == 'BTCUSD_BPI'){
+				data = appState.dataSource[ 'IND:coindesc:BTC/USD_BPI' ];
+			}
+			else
+			if (v.symbol == 'BTCUSD_CF_RTI'){
+				data = appState.dataSource[ 'IND:cryptofacilities:CME CF Real-Time Indices' ];
+			}
+			else
+			if (v.symbol == 'BTCUSD_CGI'){
+				data = appState.dataSource[ 'IND:coingecko:BTC/USD' ];
+			}
+			else
+			if (v.symbol == 'BTCUSD_CF_REF'){
+				data = appState.dataSource[ 'IND:cryptofacilities:CME CF Reference Rates' ];
+			}
+			else
+			if (v.symbol == 'BTCUSD_CCI'){
+				data = appState.dataSource[ 'IND:cryptocompare:BTC/USD' ];
+			}
+			else
+			if (v.symbol == 'BTCUSD_CMC'){
+				data = appState.dataSource[ 'IND:coinmarketcap:BTC/USD' ];
+			}
+			else
+			if (v.symbol == 'BTCUSD_BCH_24HWA'){
+				data = appState.dataSource[ 'IND:bitcoincharts:BTC/USD_24HWA' ]; 
+			}	
+			
+			//create multisig tx with data 
+			if (data && nodePrivKey.privKey && data.pubKey){
+				
+//console.dir( data, {depth:16});
+				let hash = sha256( JSON.stringify(data) );
+				//use addition sign = with proposer 
+				let sign2 = secp256k1.sign(
+					hash, 
+					Buffer.from(nodePrivKey.privKey, 'hex')
+				).signature.toString('hex');
+				
+				//code:hash:sign:pubkey:flags:data
+				//sign: sign1,sign2, pubkey: pk1,pk2   
+				//flag msig == multisig tx 
+				let tx = 'aiv:' + data.hash + ':' + data.sign + ',' + sign2 + ':' + data.pubKey + ',' + nodePrivKey.pubKey + ':'+appState.blockHeight+':' + Buffer.from( JSON.stringify( {symbol: v.symbol, data: data.data} ), 'utf8').toString('base64');
+				
+//console.log( 'tx: ' + tx );
+				
+				indexProtocol.txQueue.push( tx );	
+				
+			}
+			
+		});
+
+
+
+		
 	},
 	
-	//transfer asset by one account to other
-	processTransfer: function( data ){
-		//find address from 
-		//find destination addres 
-		var _from = indexProtocol.getAddressBy( data.base );
-		var _to = indexProtocol.getAddressBy( data.toad ); 
+	//parse raw tx from Tendermint (as a buffer)
+	//based on tx-spec.txt 
+	//return false if error 
+	parseTx: function( rawTx ){
+		if (!rawTx || !Buffer.isBuffer( rawTx ))
+			return false;
 		
-		if (_from && _to){
-			//проверить достаточность суммы 
-			var total = data.amnt; //
-			var fromAcc = appState.accountStore[ _from ];
-			var toAcc   = appState.accountStore[ _to ];
+		const tx 		= rawTx.toString('utf8');
+		
+		if (!tx) return false;
+		
+		/*
+		Global structure: 
+
+		<code>:<version:1>:<ApplyFromTs:0>:<ApplyOnlyAfterHeight:0>:<Hash(Sha256)>:<CounOfSign:1>:<Signature:S1>:<PubKey(Compres)>:<Data/Base64>
+
+		Code: 
+
+		protocol.<native tx, must be processed>
+
+		data.src.trades   (can be 2 formats: short, code:version:hash:data and full (with all fields)
+		data.src.index    (only full variant)
+		data.index - comitted by proposal <immediate process>
+		*/
+		const z  = tx.split(':');
+		
+		if (z.length < 4) return false; //minimal length
+		
+		let txObj = {
+			code		: 'unknown',
+			version		: 1,
+			applyTx		: 0, //immediate
+			applyHeight : 0, 
+			hash		: null,
+			multiSigns	: 1, //count of signatures for tx
+			sign		: false,
+			pubKey		: false,
 			
-			if (fromAcc.assets[ data.symb ].amount >= total && fromAcc.nonce < data.nonc){
-				//do this 
-				if (!toAcc.assets[ data.symb ]){
-					toAcc.assets[ data.symb ] = { amount: 0};
-				}
-				
-				fromAcc.nonce++;				
-				fromAcc.assets[ data.symb ].amount = fromAcc.assets[ data.symb ].amount - total;
-				toAcc.assets[ data.symb ].amount = toAcc.assets[ data.symb ].amount + total;
-				
-				fromAcc.updatedBlockHeight = appSate.blockHeight;
-				toAcc.updatedBlockHeight = appSate.blockHeight;
-				
-				//формируем тразакцию для сохранения 
-				let tx = {
-					fromAddr	: _from,
-					toAddr   	: _to, 
-					blockheight : appSate.blockHeight,
-					appState	: appState.previousAppHash,
-					
-					hash 		: '',
-					
-					original	: data
-				}
-				
-				
-				let sha256  = crypto.createHash('sha256');	
-				let txHash  = sha256.update( Buffer.from( stringify( tx ), 'utf8') ).digest('hex');
-				
-				tx.hash = txHash;
-				
-				let txJson = stringify( tx );
-				
-				fromAcc.tx.push( txHash );
-				toAcc.tx.push( txHash );
-				
-				let sha256  = crypto.createHash('sha256');	
-				let accJson = stringify( fromAcc );
-				let accHash = sha256.update( Buffer.from( accJson, 'utf8') ).digest('hex');
-				
-				appState.accountStore[ _from ] = accHash;
-				
-				
-				let sha256  = crypto.createHash('sha256');	
-				let accJson = stringify( toAcc );
-				let accHash = sha256.update( Buffer.from( accJson, 'utf8') ).digest('hex');
-				
-				appState.accountStore[ _to ] = accHash;
-				
-				saveOps.push({ type: 'put', key: 'tbl.tx.transfer.' + txHash, value: txJson });
-				
-				return true;				
-			}			
-		}		
+			isShortFormat: false,
+			data		: null, //json-decoded data
+			dataRaw		: null			
+		}
+		
+		if (z[0]) txObj.code = z[0].trim();
+		
+		txObj.version = parseInt(z[1]);
+		
+		if (z.length == 9){
+			txObj.applyTx = parseInt(z[2]);
+			txObj.applyHeight = parseInt(z[3]);
+			
+			txObj.hash = z[4].trim();
+			
+			txObj.multiSigns = parseInt(z[5]);
+			
+			txObj.sign = z[6].trim();
+			txObj.pubKey = z[7].trim();
+			
+			txObj.dataRaw = z[8].trim();
+		}
+		else {
+			txObj.hash = z[2].trim();
+			txObj.dataRaw = z[3].trim();
+			
+			txObj.isShortFormat = true;
+		}
+		
+		if (txObj.dataRaw){
+			txObj.data = JSON.parse( txObj.dataRaw );
+		}
+		
+		//check Sign and Pubkey 
+		if (txObj.pubKey && secp256k1.publicKeyVerify( Buffer.from(txObj.pubKey, 'hex') ) != true ){
+			return false;
+		}
+		
+		if (txObj.pubKey && !txObj.sign)
+			return false;
+		
+		if (txObj.hash != sha256( txObj.dataRaw ).toString('hex'))
+			return false;
+		
+		return txObj;		
 	}
+	
 }
 
 //APP state
@@ -984,10 +1059,10 @@ let server = createServer({
 							});
 						}
 						
-						if (data.data.assets.length == 0){
-							//fix native currency balance 
-							data.data.assets.push({symbol: appState.options.nativeSymbol, amount: 0});
-						}
+						//if (data.data.assets.length == 0){
+						//fix native currency balance 
+						data.data.assets[ appState.options.nativeSymbol ] = { amount: 0};
+						
 						
 						//Save to systems accounts 
 						indexProtocol.accountsStore[ data.address ] = data;
@@ -1003,6 +1078,7 @@ let server = createServer({
 				_.each(genesisAppState.initialAllocation, function(v){
 					if (indexProtocol.accountsStore[ v.to ] && appState.assetStore[ v.symbol ]){
 						
+						/*
 						let t = _.find( indexProtocol.accountsStore[ v.to ].data.assets, function(z){ if (z.symbol === v.symbol) return true; });
 						
 						if (t){
@@ -1010,7 +1086,8 @@ let server = createServer({
 						}
 						else
 							indexProtocol.accountsStore[ v.to ].data.assets.push( {symbol: v.symbol, amount: v.amount} );
-						
+						*/
+						indexProtocol.accountsStore[ v.to ].data.assets[ v.symbol ] = { amount: v.amount };
 						console.log('Initial appState allocation: to ' + v.to + ', asset ' + v.symbol + ', amount ' + v.amount);
 					}
 					else {
@@ -1258,12 +1335,9 @@ let server = createServer({
 				return new Promise(function(resolve, reject){
 					
 					stateDb.get('appState', function(err, val){
-						if (!err && val){
-							console.log('Query fetch: latest appState');
+						if (!err && val && Buffer.isBuffer(val)){
+							val = val.toString('utf8');								
 							
-							if (Buffer.isBuffer(val)){
-								val = val.toString('utf8');								
-							}
 							//@todo: optimize code/decode
 							return resolve( {code: 0, value: Buffer.from(val, 'utf8').toString('base64')} );
 						}
@@ -1278,8 +1352,6 @@ let server = createServer({
 				let maxCountAddr = 1000; //maximum of addresses
 				let _res = [];
 				
-				console.log( appState.options.nativeSymbol );
-				
 				_.each(indexProtocol.accountsStore, function(v, addr){
 					if (_res.length > maxCountAddr) return;
 					
@@ -1288,10 +1360,19 @@ let server = createServer({
 //console.dir( v.data.assets, {depth:2} );
 					
 					//find balance at IDX
+					if (v.data.assets[ appState.options.nativeSymbol ]){
+						_amount = parseInt( v.data.assets[ appState.options.nativeSymbol ].amount );
+						
+						let dvd = appState.assetStore[ appState.options.nativeSymbol ].divider;
+							
+						if (dvd > 1){
+							_amount = Number(_amount / dvd).toFixed(2);
+						}
+					}
+					
+					/**
 					if (v.data.assets.length > 0){
 						let obj = _.find(v.data.assets, function(bal){
-							
-							//console.log( [bal, bal.symbol, appState.options.nativeSymbol, (bal.symbol == appState.options.nativeSymbol)]  );
 							
 							if (bal.symbol == appState.options.nativeSymbol)
 								return true;
@@ -1307,6 +1388,7 @@ let server = createServer({
 							}
 						}
 					}
+					**/
 					
 					_res.push({
 						address	:	v.address,
@@ -1332,11 +1414,86 @@ let server = createServer({
 				_.each(appState.assetStore, function(v){
 					if (_res.length > maxCountAssets) return;
 					
-					_res.push( v );
+					let x = v;	
+						x.txCounter = x.tx.length; 
+						x.tx = [];
+					
+					_res.push( x );
 					
 				});
 	
 				return {code: 0, value: Buffer.from(JSON.stringify( _res ), 'utf8').toString('base64')};
+			}
+			else
+			if (path === 'tbl.assets.info'){
+				let symbol = data.toString('utf8');
+				
+				console.log('Request info symbol: ' + symbol);
+				
+				
+//console.dir( appState.assetStore, {depth:16} );
+				
+				if (!appState.assetStore[ symbol.toUpperCase() ]){
+					return {code: 1};
+				}
+				
+				let ass = appState.assetStore[ symbol.toUpperCase() ];
+				
+					ass.valuesHistory = [];
+					
+				if (ass.type === 'index'){
+					//todo: maybe latest N
+					if (_.isArray(indexProtocol.indexValuesHistory[ symbol ])){
+						ass.valuesHistory = indexProtocol.indexValuesHistory[ symbol ].slice( indexProtocol.indexValuesHistory[ symbol ].length - 32);
+					}
+				}
+				
+				return {code: 0, value: Buffer.from(JSON.stringify( ass ), 'utf8').toString('base64')};
+			}
+			else
+			if (path === 'tbl.assets.index.latest'){
+				let symbol = data.toString('utf8');
+				
+				console.log('Request latest index value for symbol: ' + symbol);
+				
+				if (!appState.assetStore[ symbol.toUpperCase() ]){
+					return {code: 1};
+				}
+				
+				let ass = appState.assetStore[ symbol.toUpperCase() ];
+				let latVal = null;
+					
+				if (ass.type === 'index'){
+					latVal = {
+						symbol: ass.symbol,
+						changesByPrevios: ass.changesByPrevios,
+						initDataValue: ass.initDataValue,
+						latestDataValue: ass.latestDataValue,
+						latestUpdateHeight: ass.latestUpdateHeight,						
+						txCount: ass.tx.length
+					}
+				}
+				
+				return {code: 0, value: Buffer.from(JSON.stringify( latVal ), 'utf8').toString('base64')};
+			}
+			else
+			if (path === 'tbl.assets.index.history'){
+				let symbol = data.toString('utf8');
+				
+				console.log('Request history index value for symbol: ' + symbol);
+				
+				if (!appState.assetStore[ symbol.toUpperCase() ]){
+					return {code: 1};
+				}
+				
+				let ass = appState.assetStore[ symbol.toUpperCase() ];
+				let valuesHistory = [];
+					
+				if (ass.type === 'index'){
+					valuesHistory = indexProtocol.indexValuesHistory[ symbol ];
+				}
+				
+				return {code: 0, value: Buffer.from(JSON.stringify( valuesHistory ), 'utf8').toString('base64')};
 			}
 			else
 			if (path === 'tbl.accounts.info'){
@@ -1360,7 +1517,7 @@ let server = createServer({
 						let account = indexProtocol.accountsStore[ address ];
 					
 						//@todo: pre-process address
-						console.log('Account data in memory cache!');
+						//console.log('Account data in memory cache!');
 						
 						if (!account.pubKeyComp){
 							//add compressed public key 
@@ -1380,12 +1537,11 @@ let server = createServer({
 						}
 						
 						//fetch all data about assets 
-						_.each(account.data.assets, function(z, i){
-							if (z && z.symbol){
-								let ass = appState.assetStore[ z.symbol ];
+						_.each(account.data.assets, function(z, symbol){
+							if (z && symbol){
+								let ass = appState.assetStore[ symbol ];
 								
 								if (!ass) return;
-
 
 								let obj = {
 									symbol				: ass.symbol,
@@ -1399,6 +1555,8 @@ let server = createServer({
 									txIssuerFee			: ass.txIssuerFee,
 									issuerAddress		: ass.issuerAddress,
 									issuerName			: ass.issuerName,
+									
+									holders				: _.size( ass.holders ),
 									
 									options				: ass.options						
 								};
@@ -1449,10 +1607,101 @@ let server = createServer({
 					});					
 				});		
 			}
+			else
+			if (path === 'tbl.accounts.open'){		//open by publicKey (fetched by private at browser)
+				
+				if (data.length === 0){
+					return {code: 1 };
+				}
+				
+				let pubKey = data.toString('utf8');
+				
+				//console.log('Request info about: ' + pubKey);
+				
+				//check account-author 
+				let fromAddr = null;
+				
+				_.find(indexProtocol.accountsStore, function( acc ){
+					if (acc.pubKey === pubKey || acc.pubKeyComp === pubKey){
+						fromAddr = acc.address;
+						return true;
+					}
+				});
+				
+				if (fromAddr){
+					console.log('Finded: ' + fromAddr);
+					
+					return {code: 0, value: Buffer.from(fromAddr, 'utf8').toString('base64')};
+				}
+				else {
+					return new Promise(function(resolve, reject){
+						stateDb.get('tbl.accounts.__lookup.' + pubKey, function(err, val){
+							console.log('Check avalability of pubKey at lookup tbl');
+						
+							if (!err && val && Buffer.isBuffer(val)){
+								val = val.toString('utf8');								
+								
+								if (val && val != ''){
+									console.log('Author address exists: ' + val);
+									
+									return resolve({code: 0, value: Buffer.from(fromAddr, 'utf8').toString('base64')});
+								}
+							}
+							
+							return resolve({code: 1, value: Buffer.from('', 'utf8').toString('base64')});
+						});
+					});
+				}				
+			}			
 		}
 		
 		return { code: 1 };
 	},
+	
+	beginBlock: function(request) {
+		
+		
+		beginBlockTs = process.hrtime();
+		indexProtocol.curTime = new Date().getTime(); //local node's time
+		//initial current block store
+		currentBlockStore = [];
+		
+		
+		//block time - UTC
+		appState.blockTime = parseInt( request.header.time.seconds + '' + Math.trunc(request.header.time.nanos/100000) ); 
+		
+//console.dir( [appState.blockTime, request.header.time.seconds, Math.trunc(request.header.time.nanos/100000)], {depth:8, colors: true} );
+		
+		//console.log( request.header.height + ' block proposerAddress: ' + request.header.proposerAddress.toString('hex') ); 
+		appState.blockHash = request.hash.toString('hex');
+		appState.blockProposer = request.header.proposerAddress.toString('hex').toLowerCase();
+		appState.blockHeight = parseInt( request.header.height.toString() );
+		
+		//console.log('      BeginBlock.Height: ' + request.header.height + ' at time '+moment.utc(appState.blockTime).format('HH:mm:ss DD/MM/YYYY')+', proposer: ' + appState.blockProposer + ', me: ' + (appState.blockProposer == indexProtocol.node.address));  
+		
+		let numTx = parseInt( request.header.numTxs.toString() );
+		
+		/** rewrite Reward/Mining sheme 
+		
+		let rewardFull = appState.options.rewardPerBlock + ( appState.options.rewardPerDataTx * numTx);
+			
+			//save to special system tbl 
+			delayedTaskQueue.push({
+				exec: 'tbl.system.rewards', 
+				address: appState.blockProposer, 
+				rewardPerBlock: appState.options.rewardPerBlock,
+				rewardPerDataTx: appState.options.rewardPerDataTx,
+				numTx: numTx,
+				
+				rewardFull: rewardFull,
+				
+				blockHeight: appState.blockHeight
+			});
+		**/
+		
+		return { code: 0 };
+	},
+  
   
 	checkTx: function(request) {
 		//console.log('Call: CheckTx', request);   
@@ -1518,9 +1767,9 @@ let server = createServer({
 				
 				
 				if (!localCopy){	//we havent local data 
-					console.log('No local data from this height.');
+					//console.log('No local data from this height.');
 					//@todo: if nothing data - what to do?
-					return { code: 1 };
+					return { code: 0 };
 				}
 				
 				//check height: if current height more then N distance from quote, stop to propagate it 
@@ -1532,7 +1781,7 @@ let server = createServer({
 				
 				//simple check - hash only (?)
 				if (hash == localCopy.hash){
-					console.log( 'Quote from proposer and local will eq by hash: ' + hash + ' === ' + localCopy.hash);
+					//console.log( 'Quote from proposer and local will eq by hash: ' + hash + ' === ' + localCopy.hash);
 					//Quote are identical by hash 
 					return { code: 0 };
 				}
@@ -1722,7 +1971,243 @@ let server = createServer({
 					return { code: 0 };
 			
 				break;
-			}			
+			}
+			case 'TRF': {
+				console.log(txType + ': checkTx of transfer assets between accounts');
+				
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase(); //Compress key!!
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+
+//console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});				
+				
+				//check base structure of tx: code:hash:sign:pubkey:flags:data
+				if (z.length != 6)		return { code: 1, log: txType + ': wrong tx length'};
+				if (!z[(z.length-1)]) 	return { code: 1, log: txType + ': empty data'}; 
+				if (!z[1])				return { code: 1, log: txType + ': wrong or empty hash'}; 
+				if (!z[3])				return { code: 1, log: txType + ': wrong public key'}; 
+				
+				let _hash = sha256( rawData );
+				
+				var pubKey = z[3]; //.toLowerCase();
+//console.log( 'hash: ' + _hash.toString('hex') );				
+				//check signature 
+				let checkSign = secp256k1.verify(_hash, Buffer.from(z[2], 'hex'), Buffer.from(pubKey, 'hex'));
+					
+				if (checkSign != true){
+					console.log(txType + ': Invalid signature');
+					
+					return { code: 1, log: 'Invalid signature' };   
+				}
+				
+				/*
+					symbol	: symbol.toUpperCase(), 
+					amount  : amount, 
+					txdate	: new Date().getTime(), //local UTC 
+					toid	: toid,
+					desc 	: '', //@todo: add any description
+					nonce:	0 //@todo: add fetch current nonce from acc 
+				*/
+				//base check tx 
+				if (!data.symbol || !data.amount || !data.txdate || !data.toid){
+					console.log(txType + ': Invalid required field');
+					
+					return { code: 1, log: 'Invalid required field' }; 
+				}
+				
+				if (!appState.assetStore[ data.symbol ]){
+					console.log(txType + ': Invalid symbol');
+					
+					return { code: 1, log: 'Invalid symbol' };
+				}
+				
+				let amount = parseFloat( data.amount );
+				let ass = appState.assetStore[ data.symbol ];
+				
+				var realAmount = Math.trunc( amount * ass.divider );
+				
+				if (realAmount < 0 || realAmount < (ass.txFee + ass.txIssuerFee)){
+					console.log(txType + ': Amount too small');
+					
+					return { code: 1, log: 'Amount too small' };
+				}
+				
+				//including all fee
+				var realAmountWithFees = realAmount + ass.txFee + ass.txIssuerFee;
+				
+				//check asset options
+				if (ass.options && ass.options.isTransferrable === false){
+					console.log(txType + ': Symbol ' + ass.symbol + ' isnt Transferrable by issuer');
+					
+					return { code: 1, log: 'Symbol isnt transferrable' };
+				}
+				
+				//fetch account 
+				//fetch account from storage 
+				return new Promise(function(resolve, reject){
+					//lookup table pubkey to address
+					stateDb.get('tbl.accounts.__lookup.' + pubKey, function(err, val){
+						console.log('Check avalability of pubKey at lookup tbl.');
+					
+						if (!err && val && Buffer.isBuffer(val)){
+							val = val.toString('utf8');								
+													
+							if (val && val != ''){
+								console.log('Author address exists: ' + val);
+								
+								stateDb.get('tbl.accounts.' + val, function(err, acc){
+									if (!err && acc && Buffer.isBuffer(acc)){
+										acc = JSON.parse( acc.toString('utf8') );
+										
+										let _asset = acc.data.assets[ data.symbol ];
+										
+										if (_asset){
+											//check amount (inc. fee)
+											if (_asset.amount >= realAmountWithFees){
+												return resolve( {code: 0} );
+											}
+											else
+												return resolve( {code: 1, log: 'Account amount too small'} );
+										}
+										else
+											return resolve( {code: 1, log: 'No asset at account'} );
+										
+										/**
+										var _asset = _.find(acc.data.assets, function(x){
+											if (x && x.symbol === data.symbol)
+												return true;
+										});
+										
+										if (_asset){
+											//check amount (inc. fee)
+											if (_asset.amount >= realAmountWithFees){
+												return resolve( {code: 0} );
+											}
+											else
+												return resolve( {code: 1, log: 'Account amount too small'} );
+										}
+										else
+											return resolve( {code: 1, log: 'No asset at account'} );
+										**/
+									}
+									else
+										return resolve( {code: 1, log: 'Error while obtain account'} );
+								});
+							}	
+							else
+								return resolve( {code: 2, log: 'Error while obtain account'} );	
+						}
+						else
+							return resolve( {code: 3, log: 'Error while obtain account'} );	
+					});
+				});
+				
+				return { code: 0 };
+			
+				break;
+			}
+			case 'CIT': {
+				console.log(txType + ': checkTx of creating index token');
+				
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase(); //Compress key!!
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+
+//console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});				
+				
+				//check base structure of tx: code:hash:sign:pubkey:flags:data
+				if (z.length != 6)		return { code: 1, log: txType + ': wrong tx length'};
+				if (!z[(z.length-1)]) 	return { code: 1, log: txType + ': empty data'}; 
+				if (!z[1])				return { code: 1, log: txType + ': wrong or empty hash'}; 
+				if (!z[3])				return { code: 1, log: txType + ': wrong public key'}; 
+				
+				let _hash = sha256( rawData );
+				
+				var pubKey = z[3]; //.toLowerCase();
+//console.log( 'hash: ' + _hash.toString('hex') );				
+				//check signature 
+				let checkSign = secp256k1.verify(_hash, Buffer.from(z[2], 'hex'), Buffer.from(pubKey, 'hex'));
+					
+				if (checkSign != true){
+					console.log(txType + ': Invalid signature');
+					
+					return { code: 1, log: 'Invalid signature' };   
+				}
+				
+				if (!data.symbol || !data.name || !data.divider){
+					console.log(txType + ': Invalid required field');
+					
+					return { code: 1, log: 'Invalid required field' }; 
+				}
+				
+				let _symbol = data.symbol.toUpperCase();
+				
+				if (appState.assetStore[ _symbol ]){
+					console.log(txType + ': Invalid symbol, MUST be unique');
+					
+					return { code: 1, log: 'Invalid symbol, MUST be unique' };
+				}
+				
+				if (data.initialEmission != data.maxSupplyEmission){
+					console.log(txType + ': For Index, initial and maxSupply emission MUST be eq.');
+					
+					return { code: 1, log: 'For Index, initial and maxSupply emission MUST be eq.' };
+				}
+				
+				if (data.initialEmission < 100000 || data.maxSupplyEmission > 100000000000){
+					console.log(txType + ': For Index, min emission 100K, max = 100B');
+					
+					return { code: 1, log: 'For Index, min emission 100K, max = 100B' };
+				}
+								
+				//all base checks passed OK.
+				//@todo: all check MUST be passed by Spec of asset
+				return { code: 0 };			
+				
+				break;
+			}
+			case 'IND': {
+				//console.log(txType + ': checkTx of third-parties indices');
+				
+				//@todo: check at normal tx 
+				return { code: 0 }; 
+				break;
+			}
+			case 'AIV': {
+				//code:hash:sign:pubkey:flags:data
+				//sign: sign1,sign2, pubkey: pk1,pk2
+				//flag msig == multisig tx 
+				//let tx = 'aiv:' + data.hash + ':' + data.sign + ',' + sign2 + ':' + data.pubKey + ',' + nodePrivKey.pubKey + ':msig:' + Buffer.from( JSON.stringify( data.data ), 'utf8').toString('base64');
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase(); //Compress key!!
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let forHeight = parseInt( flags );
+				
+				//check height: if current height more then N distance from quote, stop to propagate it 
+				if (Math.abs(appState.blockHeight - forHeight) >= maxDiffFromAppHeight){
+					//console.log( 'Quote from proposer and local has big difference by height: ' + appState.blockHeight + ' (app), ' + data.blockHeight + ' (tx)');
+					
+					return { code: 1 };
+				}
+				
+				
+				//@todo: check it
+				return { code: 0 }; 
+				break;
+			}
+			
+			
 			
 			default: {	
 				break;
@@ -1840,12 +2325,9 @@ let server = createServer({
 						
 				break;
 			}
-			
-			//new account register action 
-			//code:hash:sign:pubkey:flags:data
 			case 'REG' : {				
 				console.log('REG: deliverTx call');
-try{				
+				
 				let hash = z[1].toLowerCase(); 
 				let sign = z[2].toLowerCase(); 
 				let pubk = z[3].toLowerCase();
@@ -1907,12 +2389,6 @@ console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
 				}
 				else
 					return { code: 0, log: 'Invalid data of reg tx' };
-}catch(e){
-	console.log('Erroro while deliverTx app handler');
-	console.dir( e, {depth:16, colors: true});
-	
-	return { code: 0 };
-}
 
 			
 				return { code: 0 };
@@ -2012,7 +2488,7 @@ console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
 					return { code: 0, log: 'Invalid tx data' }
 			}	
 			case 'MSG': {
-				console.log('MSG: deliverTx of sending messages for existing address');
+				console.log(txType + ': deliverTx of sending messages for existing address');
 				
 //console.dir( z, {depth:16});
 			
@@ -2040,20 +2516,20 @@ console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
 				let checkSign = secp256k1.verify(_hash, Buffer.from(z[2], 'hex'), Buffer.from(pubKey, 'hex'));
 					
 				if (checkSign != true){
-					console.log('MSG: Invalid signature');
+					console.log(txType + ': Invalid signature');
 					
 					return { code: 0, log: 'Invalid signature' };   
 				}
 				
 				//check message length 
 				if (Buffer.byteLength(data.msg, 'utf8') > 8192){
-					console.log('MSG: Invalid message length, max.: 8192');
+					console.log(txType + ': Invalid message length, max.: 8192');
 					
 					return { code: 0, log: 'Invalid signature' };   
 				}
 				
 				if (!data.to || data.to.length < 1){
-					console.log('MSG: Invalid array of to');
+					console.log(txType + ': Invalid array of to');
 					
 					return { code: 0, log: 'Invalid recipients' };
 				}
@@ -2162,6 +2638,608 @@ console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
 				
 				break;
 			}
+			case 'TRF': {
+				console.log(txType + ': deliverTx of transfer assets between accounts');
+				
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase(); //Compress key!!
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+
+//console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});				
+				
+				//check base structure of tx: code:hash:sign:pubkey:flags:data
+				if (z.length != 6)		return { code: 0, log: txType + ': wrong tx length'};
+				if (!z[(z.length-1)]) 	return { code: 0, log: txType + ': empty data'}; 
+				if (!z[1])				return { code: 0, log: txType + ': wrong or empty hash'}; 
+				if (!z[3])				return { code: 0, log: txType + ': wrong public key'}; 
+				
+				let _hash = sha256( rawData );
+				
+				var pubKey = z[3]; //.toLowerCase();
+//console.log( 'hash: ' + _hash.toString('hex') );				
+				//check signature 
+				let checkSign = secp256k1.verify(_hash, Buffer.from(z[2], 'hex'), Buffer.from(pubKey, 'hex'));
+					
+				if (checkSign != true){
+					console.log(txType + ': Invalid signature');
+					
+					return { code: 0, log: 'Invalid signature' };   
+				}
+				
+				/*
+					symbol	: symbol.toUpperCase(), 
+					amount  : amount, 
+					txdate	: new Date().getTime(), //local UTC 
+					toid	: toid,
+					desc 	: '', //@todo: add any description
+					nonce:	0 //@todo: add fetch current nonce from acc 
+				*/
+				//base check tx 
+				if (!data.symbol || !data.amount || !data.txdate || !data.toid){
+					console.log(txType + ': Invalid required field');
+					
+					return { code: 0, log: 'Invalid required field' }; 
+				}
+				
+				if (!appState.assetStore[ data.symbol ]){
+					console.log(txType + ': Invalid symbol');
+					
+					return { code: 0, log: 'Invalid symbol' };
+				}
+				
+				let amount = parseFloat( data.amount );
+				let ass = appState.assetStore[ data.symbol ];
+				
+				var realAmount = Math.trunc( amount * ass.divider );
+				
+				if (realAmount < 0 || realAmount < (ass.txFee + ass.txIssuerFee)){
+					console.log(txType + ': Amount too small');
+					
+					return { code: 0, log: 'Amount too small' };
+				}
+				
+				//including all fee
+				var realAmountWithFees = realAmount + ass.txFee + ass.txIssuerFee;
+				
+				let txFeeAddr = ass.txFeeAddress;
+				let txFeeIssuerAddr = ass.txIsserFeeAddress;
+				
+				//check asset options
+				if (ass.options && ass.options.isTransferrable === false){
+					console.log(txType + ': Symbol ' + ass.symbol + ' isnt Transferrable by issuer');
+					
+					return { code: 1, log: 'Symbol isnt transferrable' };
+				}
+				
+console.log('All check passed OK, try to change balances...');
+				
+				//lets do tx 
+				return new Promise(function(resolve, reject){
+					var zOps = {
+						'fromAddr' 	: function(cb){
+							stateDb.get('tbl.accounts.__lookup.' + pubKey, function(err, val){
+								if (!err && val && Buffer.isBuffer(val)){
+									val = val.toString('utf8');								
+															
+									if (val && val != '')
+										return cb(null, val);
+								}
+								
+								cb(err);
+							});									
+						},
+						'toAddr'	: function(cb){
+							stateDb.get('tbl.accounts.__lookup.' + data.toid, function(err, val){
+								if (!err && val && Buffer.isBuffer(val)){
+									val = val.toString('utf8');								
+															
+									if (val && val != '')
+										return cb(null, val);
+								}
+								
+								cb(err);
+							});
+						}
+					};
+					
+					async.parallel(zOps, function(err, results){
+						if (!err && results.fromAddr && results.toAddr){
+							//fetch both accounts and change balances on it
+							var asyncOps = {
+								'fromAcc' 	: function(cb){
+									stateDb.get('tbl.accounts.' + results.fromAddr, function(err, val){
+										if (!err && val && Buffer.isBuffer(val)){
+											val = JSON.parse( val.toString('utf8') );					
+																	
+											if (val && val != '')
+												return cb(null, val);
+										}
+										
+										cb(err);
+									});									
+								},
+								'toAcc' 	: function(cb){
+									stateDb.get('tbl.accounts.' + results.toAddr, function(err, val){
+										if (!err && val && Buffer.isBuffer(val)){
+											val = JSON.parse( val.toString('utf8') );					
+																	
+											if (val && val != '')
+												return cb(null, val);
+										}
+										
+										cb(err);
+									});									
+								},
+								'txFeeAcc' 	: function(cb){
+									if (txFeeAddr === 'indxt0000000000000000000000000000'){
+										return cb(null, null);
+									}
+									
+									stateDb.get('tbl.accounts.' + txFeeAddr, function(err, val){
+										if (!err && val && Buffer.isBuffer(val)){
+											val = JSON.parse( val.toString('utf8') );					
+																	
+											if (val && val != '')
+												return cb(null, val);
+										}
+										
+										cb(err);
+									});									
+								},
+								'txFeeIssuerAcc' 	: function(cb){
+									if (txFeeIssuerAddr === 'indxt0000000000000000000000000000'){
+										return cb(null, null);
+									}
+																		
+									stateDb.get('tbl.accounts.' + txFeeIssuerAddr, function(err, val){
+										if (!err && val && Buffer.isBuffer(val)){
+											val = JSON.parse( val.toString('utf8') );					
+																	
+											if (val && val != '')
+												return cb(null, val);
+										}
+										
+										cb(err);
+									});									
+								}								
+							};
+							
+							//@todo: calc fee before tx and include it to Tx
+							async.parallel(asyncOps, function(err, res){
+								if (!err && res){
+									//add realAmount to 
+									/**
+									let _balance = _.find(res.toAcc.data.assets, function(a){
+										if (a && a.symbol === data.symbol)
+											return true;
+									});
+									*/
+									let _balance = res.toAcc.data.assets[ data.symbol ];
+									
+									if (_balance){
+										_balance.amount += realAmount;
+										
+										//add tx 
+										if (!res.toAcc.tx)	res.toAcc.tx = [];
+														
+										res.toAcc.tx.push( txHash );
+										res.toAcc.nonce++;
+										
+										if (!indexProtocol.accountsStore[ res.toAcc.address ])
+											indexProtocol.accountsStore[ res.toAcc.address ] = res.toAcc;
+										else {
+											indexProtocol.accountsStore[ res.toAcc.address ].tx.push( txHash );
+											
+											indexProtocol.accountsStore[ res.toAcc.address ].nonce++;
+											
+											/*
+											let _b = _.find(indexProtocol.accountsStore[ res.toAcc.address ].data.assets, function(ab){
+												if (ab && ab.symbol === data.symbol)
+													return true;
+											});
+											
+											if (_b){
+												_b.amount += realAmount;
+											}
+											*/
+											let _b = indexProtocol.accountsStore[ res.toAcc.address ].data.assets[ data.symbol ];
+											
+											if (_b){
+												_b.amount += realAmount;
+											}
+										}
+										
+										saveOps.push({type: 'put', key: 'tbl.accounts.' + res.toAcc.address, value: JSON.stringify(indexProtocol.accountsStore[ res.toAcc.address ])});
+									}
+									
+									//add TxFee
+									//add TxIssuerFee
+									//dec realAmount + TxFee + TxIssuerFee
+									/*
+									let _balance2 = _.find(res.fromAcc.data.assets, function(a){
+										if (a && a.symbol === data.symbol)
+											return true;
+									});
+									*/
+									let _balance2 = res.fromAcc.data.assets[ data.symbol ];
+									
+									if (_balance2){
+										_balance2.amount -= realAmountWithFees;
+										
+										//add tx 
+										if (!res.fromAcc.tx)	res.fromAcc.tx = [];
+														
+										res.fromAcc.tx.push( txHash );
+										res.fromAcc.nonce++;
+										
+										if (!indexProtocol.accountsStore[ res.fromAcc.address ])
+											indexProtocol.accountsStore[ res.fromAcc.address ] = res.fromAcc;
+										else {
+											indexProtocol.accountsStore[ res.fromAcc.address ].tx.push( txHash );
+											
+											indexProtocol.accountsStore[ res.fromAcc.address ].nonce++;
+											
+											/*
+											let _b2 = _.find(indexProtocol.accountsStore[ res.fromAcc.address ].data.assets, function(ab){
+												if (ab && ab.symbol === data.symbol)
+													return true;
+											});
+											*/
+											
+											let _b2 = indexProtocol.accountsStore[ res.fromAcc.address ].data.assets[ data.symbol ]; 
+											
+											if (_b2){
+												_b2.amount -= realAmountWithFees;
+											}											
+										}
+										
+										saveOps.push({type: 'put', key: 'tbl.accounts.' + res.fromAcc.address, value: JSON.stringify(indexProtocol.accountsStore[ res.fromAcc.address ])});
+									}
+								}
+								
+								return resolve( {code: 0} );
+							});
+						}
+
+					});
+
+				});
+				
+				return { code: 0 };
+				break;
+			}
+			case 'CIT': {
+				console.log(txType + ': deliverTx of creating index token');
+				
+				//Register new Index token and issue all of them 
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase(); //Compress key!!
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+
+//console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});				
+				
+				//check base structure of tx: code:hash:sign:pubkey:flags:data
+				if (z.length != 6)		return { code: 0, log: txType + ': wrong tx length'};
+				if (!z[(z.length-1)]) 	return { code: 0, log: txType + ': empty data'}; 
+				if (!z[1])				return { code: 0, log: txType + ': wrong or empty hash'}; 
+				if (!z[3])				return { code: 0, log: txType + ': wrong public key'}; 
+				
+				let _hash = sha256( rawData );
+				
+				var pubKey = z[3]; //.toLowerCase();
+//console.log( 'hash: ' + _hash.toString('hex') );				
+				//check signature 
+				let checkSign = secp256k1.verify(_hash, Buffer.from(z[2], 'hex'), Buffer.from(pubKey, 'hex'));
+					
+				if (checkSign != true){
+					console.log(txType + ': Invalid signature');
+					
+					return { code: 0, log: 'Invalid signature' };   
+				}
+				
+				if (!data.symbol || !data.name || !data.divider){
+					console.log(txType + ': Invalid required field');
+					
+					return { code: 0, log: 'Invalid required field' }; 
+				}
+				
+				let _symbol = data.symbol.toUpperCase();
+				
+				if (appState.assetStore[ _symbol ]){
+					console.log(txType + ': Invalid symbol, MUST be unique');
+					
+					return { code: 0, log: 'Invalid symbol, MUST be unique' };
+				}
+				
+				if (data.initialEmission != data.maxSupplyEmission){
+					console.log(txType + ': For Index, initial and maxSupply emission MUST be eq.');
+					
+					return { code: 0, log: 'For Index, initial and maxSupply emission MUST be eq.' };
+				}
+				
+				if (data.initialEmission < 100000 || data.maxSupplyEmission > 100000000000){
+					console.log(txType + ': For Index, min emission 100K, max = 100B');
+					
+					return { code: 0, log: 'For Index, min emission 100K, max = 100B' };
+				}
+				
+				//@todo: use dedicated Spec to create Asset 
+				var indexToken = {
+					symbol				: _symbol,
+					dividedSymbol		: '', //symbol for divided assets
+					type				: 'index',
+					family				: 'IND', //as Bloomber code
+					standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+					
+					name				: data.name.substring(0, 128),
+					desc				: 'Standart index token for tracking performance and issues derivative', 
+					
+					spec				: data.spec, //link to asset specification
+					newsfeed			: data.newsfeed, //link to RSS feed for news related to asset
+					
+					underlayerSymbol	: '', //for contract - base asset 
+					divider				: data.divider,
+					
+					txFeePaymentBy		: 'IDX',
+					txFee				: 0, //default fee, payed for validators 
+					txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+					
+					//fill by data from account
+					issuerAddress		: '',	//special default address for native coin ONLY
+					issuerName			: '', //alt-name, one of registered at account
+					
+					txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+					txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+					
+					actionsAllowed		: [], //actions, reserved for future
+					
+					//addition data for token. e.g. index value for index
+					initDataValue		: 0,
+					latestDataValue		: 0,
+					changesByPrevios	: 0, //unsigned
+					latestUpdateHeight	: appState.blockHeight,	
+					
+					//@todo: use block counter to update this
+					dataUpdatesFreq		: data.dataUpdatesFreq, //data updating declared
+					
+					//valueHistory		: [], //latest N values
+					
+					emission			: {
+						initial			: data.initialEmission, 
+						maxSupply		: data.maxSupplyEmission,
+						
+						issueHeight		: appState.blockHeight,
+						maturityHeight	: 0,
+						callableMaturityHeight: 0	
+					},
+					
+					multisig: [], //for multisig action 
+				
+					options				: {
+						isTradable			: new Boolean(data.options.isTradable), 
+						isBurnable			: new Boolean(data.options.isBurnable),
+						isMintable			: new Boolean(data.options.isMintable),
+						isCallableMaturity	: new Boolean(data.options.isCallableMaturity),
+						isFrozen			: new Boolean(data.options.isFrozen),
+						isTransferrable		: new Boolean(data.options.isTransferrable),
+						isUniqe				: new Boolean(data.options.isUniqe), 
+						isMassPayable		: new Boolean(data.options.isMassPayable),
+						isMultisigble		: new Boolean(data.options.isMultisigble),
+						isContractAllowed	: new Boolean(data.options.isContractAllowed) 
+					},
+					
+					//total summ is CurculationSupply
+					holders	: {},  //map of all holders (address => amount)
+						
+					tx		: [] //array of all tx with this coin (to be disscuss)
+				};
+				
+//console.dir( indexToken, {depth:16});	
+				
+				return new Promise(function(resolve, reject){
+					let asyncOps = [
+						//fetch address of issuer
+						function(cb){
+							stateDb.get('tbl.accounts.__lookup.' + pubKey, function(err, val){
+								if (!err && val && Buffer.isBuffer(val)){
+									val = val.toString('utf8');								
+															
+									if (val && val != '')
+										return cb(null, val);
+									else
+										cb(1);
+								}
+								
+								cb(err);
+							});
+						},
+						//fetch account 
+						function(addr, cb){
+							if (addr && addr.indexOf('indxt') === 0){
+								stateDb.get('tbl.accounts.' + addr, function(err, val){
+									if (!err && val && Buffer.isBuffer(val)){
+										val = JSON.parse( val.toString('utf8') );					
+																
+										if (val && val != '')
+											return cb(null, addr, val);
+									}
+									
+									cb(err);
+								});
+							}
+							else
+								cb(false);
+						}, 
+						//process new asset
+						function(addr, acc, cb){
+							
+							if (addr && addr.indexOf('indxt') === 0 && acc.address === addr){
+								indexToken.issuerAddress = acc.address;
+								indexToken.issuerName = acc.name;
+								
+								if (indexToken.txFee > 0){
+									indexToken.txFeeAddress = acc.address;
+								}
+								
+								if (indexToken.txIssuerFee > 0){
+									indexToken.txIsserFeeAddress = acc.address;
+								}
+								
+								//add initial allocation 
+								indexToken.holders[ acc.address ] = indexToken.emission.initial;
+								
+								acc.data.assets[ indexToken.symbol ] = { amount: indexToken.emission.initial };
+																
+								appState.assetStore[ indexToken.symbol ] = indexToken;
+								
+								//save to Db 
+								saveOps.push({type: 'put', key: 'tbl.assets.' + indexToken.symbol.toUpperCase(), value: JSON.stringify(indexToken)});
+								saveOps.push({type: 'put', key: 'tbl.accounts.' + acc.address, value: JSON.stringify(acc)});
+								
+								console.log('New INDEX Token issued OK. Symbol: ' + indexToken.symbol);	
+
+								cb(null);
+							}
+							else
+								cb( 3 );
+						}				
+					];
+					
+					
+					async.waterfall( asyncOps, function(err, results){
+						
+						if (!err){						
+							resolve({code: 0, log: 'New INDEX Token issued OK. Symbol: ' + indexToken.symbol});
+						}						
+					});
+					
+					
+				});
+				
+				
+				
+				
+				
+				
+				
+				
+			}	
+			case 'IND': {
+				//for old version
+				if (z.length != 6) return { code: 0 };
+								
+				//console.log(txType + ': deliverTx of third-parties indices');
+				
+				//@todo: check at normal tx 
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase(); //Compress key!!
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+				
+				let tmp = appState.dataSource[ data.type + ':' + data.excode + ':' + data.symbol ];
+				
+				if (!tmp || (tmp && (tmp.ts != data.ts || tmp.price != data.price))){
+					
+					let x = {
+						pubKey: pubk,
+						sign  : sign,
+						data  : data
+					};	
+					
+					/*
+						{ id: 185,
+						  symbol: 'BTC/USD',
+						  asset: 'BTC',
+						  cur: 'USD',
+						  type: 'IND',
+						  side: '',
+						  ts: 1551891925000,
+						  excode: 'cryptocompare',
+						  amount: 1000000,
+						  total: 3874370000,
+						  price: 3874370000 }
+					*/					
+					appState.dataSource[ data.type + ':' + data.excode + ':' + data.symbol ] = x;
+				}
+				
+				return { code: 0 };
+								
+				break;
+			}
+			case 'AIV': {
+				//code:hash:sign:pubkey:flags:data
+				//sign: sign1,sign2, pubkey: pk1,pk2
+				//flag msig == multisig tx 
+				//let tx = 'aiv:' + data.hash + ':' + data.sign + ',' + sign2 + ':' + data.pubKey + ',' + nodePrivKey.pubKey + ':msig:' + Buffer.from( JSON.stringify( data.data ), 'utf8').toString('base64');
+				
+				//@todo: check it
+				
+				let hash = z[1].toLowerCase(); 
+				let sign = z[2].toLowerCase(); 
+				let pubk = z[3].toLowerCase(); //Compress key!!
+				let flags = z[4].toLowerCase();
+				let rawData = Buffer.from( z[(z.length-1)], 'base64').toString('utf8');
+				
+				let data = JSON.parse( rawData );
+				
+//console.dir( [hash, sign, pubk, flags, rawData, data], {depth:16});
+
+				let symbol = data.symbol;
+				
+				if (appState.assetStore[ symbol ] && appState.assetStore[ symbol ].type == 'index'){
+					let ass = appState.assetStore[ symbol ];
+					
+					if (ass.tx.indexOf( txHash ) != -1)
+						return { code: 0 };
+					
+					
+					let prev = ass.latestDataValue;
+						
+						ass.latestDataValue = data.data.price;
+						ass.changesByPrevios = ass.latestDataValue - prev;
+						ass.latestUpdateHeight = appState.blockHeight;
+						
+						ass.tx.push( txHash );
+						
+						if (!indexProtocol.indexValuesHistory[ symbol ]){
+							indexProtocol.indexValuesHistory[ symbol ] = [];
+						}
+						
+						if (indexProtocol.indexValuesHistory[ symbol ].length == appState.options.historyPoints){
+							indexProtocol.indexValuesHistory[ symbol ].shift();
+						}
+						
+						//store off-chain
+						indexProtocol.indexValuesHistory[ symbol ].push({   
+							v: data.data.price,
+							c: ass.changesByPrevios,
+							h: appState.blockHeight,
+							t: appState.blockTime,
+							x: txHash
+						});
+					
+					console.log('INDEX: updated ' + ass.symbol + ' to new value: ' + data.data.price + '('+ass.changesByPrevios+')'); 
+					
+					saveOps.push({type: 'put', key: 'tbl.assets.' + ass.symbol.toUpperCase(), value: JSON.stringify(ass)});
+				}
+				
+				
+				return { code: 0 }; 
+				break;
+			}
+			
+			
 			
 			default: {	//DEBUG
 				return { code: 0, log: 'Unknown tx type' };
@@ -2184,56 +3262,7 @@ finally {
 		//  return { code: 1, log: 'tx does not match count' }
 		//}
 
-		// update state
-		// state.count += 1
-
 		return { code: 0 }; //, log: 'tx succeeded' };
-	},
-  
-	beginBlock: function(request) {
-		
-		
-		beginBlockTs = process.hrtime();
-		indexProtocol.curTime = new Date().getTime(); //local node's time
-		//initial current block store
-		currentBlockStore = [];
-		
-		
-//	console.dir( request.header.time, {depth:8, colors: true} );
-		
-		//block time - UTC
-		appState.blockTime = parseInt( request.header.time.seconds + '' + Math.trunc(request.header.time.nanos/1000000) ); 
-		
-//console.dir( appState.blockTime, {depth:8, colors: true} );
-		
-		//console.log( request.header.height + ' block proposerAddress: ' + request.header.proposerAddress.toString('hex') ); 
-		appState.blockHash = request.hash.toString('hex');
-		appState.blockProposer = request.header.proposerAddress.toString('hex').toLowerCase();
-		appState.blockHeight = parseInt( request.header.height.toString() );
-		
-		//console.log('      BeginBlock.Height: ' + request.header.height + ' at time '+moment.utc(appState.blockTime).format('HH:mm:ss DD/MM/YYYY')+', proposer: ' + appState.blockProposer + ', me: ' + (appState.blockProposer == indexProtocol.node.address));  
-		
-		let numTx = parseInt( request.header.numTxs.toString() );
-		
-		/** rewrite Reward/Mining sheme 
-		
-		let rewardFull = appState.options.rewardPerBlock + ( appState.options.rewardPerDataTx * numTx);
-			
-			//save to special system tbl 
-			delayedTaskQueue.push({
-				exec: 'tbl.system.rewards', 
-				address: appState.blockProposer, 
-				rewardPerBlock: appState.options.rewardPerBlock,
-				rewardPerDataTx: appState.options.rewardPerDataTx,
-				numTx: numTx,
-				
-				rewardFull: rewardFull,
-				
-				blockHeight: appState.blockHeight
-			});
-		**/
-		
-		return { code: 0 };
 	},
   
 	endBlock: function(request){
@@ -2381,10 +3410,35 @@ const _jsonAvgTs = process.hrtime(t5);
 			
 		//if I Proposer - lets send Tx 
 		if (indexProtocol.isProposer(appState.blockProposer, appState.blockHeight) == true && indexProtocol.node.rpcHealth === true){
-						
-			const t1 = process.hrtime();
-			const tx = indexProtocol.prepareCalculatedRateTx( indexProtocol.lastAvg );
+			//check index tokens
+			indexProtocol.updateIndexTokens();
 
+
+			//const t1 = process.hrtime();
+			//const tx = 
+			indexProtocol.prepareCalculatedRateTx( indexProtocol.lastAvg );
+				
+			if (indexProtocol.txQueue.length > 0){
+				//todo: use async to run all				
+				console.log('\n\nAt txHTTP queue: ' + indexProtocol.txQueue.length + '\n\n');
+				
+				let asyncq = indexProtocol.txQueue;	
+				
+				asyncq.forEach(function(tx){
+					http.get(indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime(), {agent:rpcHttpAgent}, 
+					function(resp){
+						//console.log('http responce code: ' + resp.statusCode + ' with time: ' + tdiff);
+					}).on('error', (e) => {
+					  //console.error(`Got error: ${e.message}`);
+					});
+				});
+				
+				indexProtocol.txQueue = [];			
+			}
+			
+			
+			
+			/**
 			if (tx){
 				http.get(indexProtocol.node.rpcHost + '/broadcast_tx_async?tx="' + tx + '"&_=' + new Date().getTime(), {agent:rpcHttpAgent}, 	function(resp){
 					const tdiff = process.hrtime(t1);
@@ -2398,6 +3452,7 @@ const _jsonAvgTs = process.hrtime(t5);
 				console.log('ERROR while building tx');
 				process.exit(1);	
 			}
+			**/
 		}
 		
 		currentThrottleCounter++; 
@@ -2437,7 +3492,6 @@ const _jsonAvgTs = process.hrtime(t5);
 		
 		console.log( appState.blockHeight + ' block, dTx: ' + appState.blockStore[0].tx.length + ', time: ' +moment.utc(appState.blockTime).format('HH:mm:ss DD/MM/YYYY')+', proposer: ' + appState.blockProposer + ' (me: ' + (appState.blockProposer == indexProtocol.node.address) + '), save queue '+saveOps.length+' ops., (commit: '+prettyHrtime(diff)+', block: '+ prettyHrtime(endBlockTs)+')');
 		
-
 
 
 	/*
@@ -2521,6 +3575,10 @@ setInterval(function(){
 	
 }, 1 * 60 * 1000); 
 **/
+
+
+
+
 
 
 //

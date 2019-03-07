@@ -49,8 +49,8 @@ function getRateTpl(){
 			ts		: 0,
 			//pts		: new Date().getTime(), //datateime of processing
 			excode	: 0,
-			pubKey	: '', //public Key of source 
-			sign	: '',
+			//pubKey	: '', //public Key of source 
+			//sign	: '',
 			amount	: 1 * fixedExponent,
 			total	: 0,
 			price	: 0
@@ -238,9 +238,9 @@ events.on('fetchData:coinMarketCap', function(src){
 					events.emit('signRate', rate, src);		
 			}
 			else
-				console.log('ERROR while obtain current rate');
+				console.log('ERROR ['+src+'] while obtain current rate');
 		}
-	).catch(console.error);	
+	).catch(function(e){console.error('ERROR ['+src+']: ', e);});	
 });
 
 events.on('fetchData:cryptoCompare', function(src){
@@ -275,7 +275,7 @@ events.on('fetchData:cryptoCompare', function(src){
 
 		//console.dir(data, {depth:16, colors: true});
 	
-	}).catch(console.error);
+	}).catch(function(e){console.error('ERROR ['+src+']: ', e);});
 });
 
 events.on('fetchData:coinGecko', function(src){
@@ -312,7 +312,7 @@ events.on('fetchData:coinGecko', function(src){
 				events.emit('signRate', rate, src);		
 		}
 		else
-			console.log('ERROR while obtain current rate');
+			console.log('ERROR ['+src+'] while obtain current rate');
 	};
 	
 	func();
@@ -349,9 +349,7 @@ events.on('fetchData:bitcoinAverage', function(src){
 		
 		//console.dir(data, {depth:16, colors: true});
 
-	}, function(error){
-		console.log(error);
-	}) ;
+	}, function(e){console.error('ERROR ['+src+']: ', e);});
 	
 });
 
@@ -385,7 +383,7 @@ events.on('fetchData:coinDesc', function(src){
 						events.emit('signRate', rate, src);					
 				}			  
 			}
-		).catch(console.error);
+		).catch(function(e){console.error('ERROR ['+src+']: ', e);});
 });
 
 events.on('fetchData:worldCoinIndex', function(src){
@@ -401,7 +399,7 @@ events.on('fetchData:worldCoinIndex', function(src){
 		
 		console.dir(data, {depth:16, colors: true});
 		
-	}).catch(console.error);
+	}).catch(function(e){console.error('ERROR ['+src+']: ', e);});
 });
 
 events.on('fetchData:bitcoinCharts', function(src){
@@ -434,7 +432,7 @@ events.on('fetchData:bitcoinCharts', function(src){
 			//console.dir(data, {depth:16, colors: true});
 		}
 	
-	}).catch(console.error);
+	}).catch(function(e){console.error('ERROR ['+src+']: ', e);});
 });
 
 events.on('fetchData:cryptoFacilities', function(src){
@@ -482,7 +480,7 @@ events.on('fetchData:cryptoFacilities', function(src){
 			//console.dir(data, {depth:16, colors: true});
 		}
 	
-	}).catch(console.error);
+	}).catch(function(e){console.error('ERROR ['+src+']: ', e);});
 });
 
 events.on('fetchData:cryptonator', function(src){
@@ -513,12 +511,11 @@ events.on('fetchData:cryptonator', function(src){
 				//let's sign and commit to chain
 				events.emit('signRate', rate, src);
 		}
-	}).catch(console.error);
+	}).catch(function(e){console.error('ERROR ['+src+']: ', e);});
 });
+
 //===========
 events.on('signRate', function(rate, src){
-	dataFeed[ src ].updated = rate.ts;
-	
 	rate.price = Math.trunc( rate.price );
 	rate.total = Math.trunc( rate.total );
 	
@@ -528,31 +525,36 @@ events.on('signRate', function(rate, src){
 	//prevent double sending
 	if (dataFeed[ src ].lastHash == hash) return;
 	
+	if (dataFeed[ src ].price === rate.price && dataFeed[ src ].ts === rate.ts) return;
+	
+	dataFeed[ src ].updated = rate.ts;
 	dataFeed[ src ].lastHash = hash;
 	
 	//add pubKey 
-	rate.pubKey = sourceKeys.keys[ src ].pubKey;
+	let pubKey = sourceKeys.keys[ src ].pubKey;
 	
-	if (!rate.pubKey) return;
+	if (!pubKey) return;
 	
 	let privKey = Buffer.from(sourceKeys.keys[ src ].privKey, 'hex');
 	
 	//lets sign this 
-	rate.sign = secp256k1.sign(hash, privKey).signature.toString('hex');
+	let sign = secp256k1.sign(hash, privKey).signature.toString('hex');
 	
 	//@todo: add sing from Node? Protocol?
-	console.log( JSON.stringify(rate) );
+	//console.log( JSON.stringify(rate) );
 	
-	if (rate && rate.price && rate.pubKey && rate.sign && rate.excode && rate.id){
+	if (rate && rate.price && pubKey && sign && rate.excode && rate.id){
 		
 		dataFeed[ src ].rate = rate;
 		
-		events.emit('sendTx', rate);
+		events.emit('sendTx', hash.toString('hex'), pubKey, sign, rate);
 	}	
 });
 
-events.on('sendTx', function(data){
-	let tx = 'ind:' + Buffer.from( JSON.stringify( data ), 'utf8').toString('base64');
+events.on('sendTx', function(hash, pubKey, sign, rate){
+	//code:hash:sign:pubkey:flags:data
+	
+	let tx = 'ind:' + hash + ':' + sign + ':' + pubKey + '::' + Buffer.from( JSON.stringify( rate ), 'utf8').toString('base64');
 	let rpc = http;
 	
 	if (rpcHost != 'localhost'){
@@ -591,7 +593,7 @@ events.on('sendTx', function(data){
 						}			
 						
 					} catch (e) {
-					  console.error(e.message);
+					  console.error('ERROR: ', e);
 					}
 				  });
 				
