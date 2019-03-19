@@ -16,6 +16,9 @@ if (genesis){
 	genesis = JSON.parse( genesis );
 }
 
+//Open datasource keys 
+const sourceKeys	= JSON.parse( fs.readFileSync('./datasource.keys.json', {encoding:'utf8'}) );
+
 var genesisAppState = {
 	accounts	: [],
 	assets		: [],
@@ -27,6 +30,7 @@ var genesisAppState = {
 		'forbiddenIds'				: [
 			'@indexprotocol.ltd', 
 			'indx*',
+			'idx*',
 			'emitent@indexprotocol.network', 
 			'info@indexprotocol.network', 
 			'token@indexprotocol.network', 
@@ -45,6 +49,20 @@ var genesisAppState = {
 		'rewardPerBlock'			: 1000, //reward to Validator for block (base value, for any tx at block)
 		'rewardPerDataTx'			: 10,
 		
+		'indicesFreq'	: {
+			'rt'	:	1, 
+			'1min'  :	20,
+			'5min'  :	100,
+			'15min' :	300,
+			'1h'    :	1200,
+			'3h'	:	3600, 
+			'12h'	:	14400,
+			'eod'	:	null,	//@todo realize it
+			'eow'	: 	null	//@todo realize it
+		},
+		
+		datafeedDxDy 	: 1000000, //multiplexer for float to int 
+		
 		//any of account-initials tx
 		'baseTxFee'					: 1
 	},
@@ -59,13 +77,13 @@ var _valPrivateKeys = [];
 _.each(genesis.validators, function(v){
 	let tAddr = v.address.toLowerCase(); //tendermint address 
 	let tName = v.name;
-	
-	
+		
 	let 	ecdh 	= 	crypto.createECDH('secp256k1');
 			ecdh.generateKeys();
 		
 	let privKey = ecdh.getPrivateKey();
 	let pubKey = ecdh.getPublicKey();
+		pubKey = secp256k1.publicKeyConvert( pubKey, true ); //compress key
 	
 	let sha256 = crypto.createHash('sha256');
 	let ripemd160 = crypto.createHash('ripemd160');
@@ -167,6 +185,7 @@ _.each(_devAccounts, function(p, v){
 		ecdh.setPrivateKey( privKey );
 		
 	let pubKey = ecdh.getPublicKey();
+		pubKey = secp256k1.publicKeyConvert( pubKey, true );
 	
 	
 	let sha256 = crypto.createHash('sha256');
@@ -193,7 +212,7 @@ _.each(_devAccounts, function(p, v){
 			messages			: [],
 			storage				: {}
 		},
-		tx					:[],
+		//tx					:[],
 		pubKey				: pubKey.toString('hex')
 	};
 
@@ -274,8 +293,7 @@ genesisAppState.assets.push({
 	
 	//total summ is CurculationSupply
 	holders	: {},  //map of all holders (address => amount)
-		
-	tx		: [] //array of all tx with this coin (to be disscuss)
+	txCounter: 0
 });
 
 //add initial distribution 
@@ -291,6 +309,910 @@ _.each(_devAddr, function(v){
 	if (ass){
 		ass.holders[ v ] = genesisAppState.options.initialNativeCoinBalance;
 	}
+});
+
+let assets	= [{	symbol				: 'BTCUSD_COININDEX',
+	'dividedSymbol'		: '', 
+	'type'				: 'index',
+	'family'				: 'IND', 
+	'standart'			: 'IDX42', 
+	
+	'name'				: 'BTC/USD Trusted Reference Rate by CoinIndex',
+	'desc'				: 'Standart index token for tracking performance and issues derivative', 
+	
+	'spec'				: 'https://coinindex.agency/indices/spec/BTCUSD_COININDEX.pdf', 
+	'newsfeed'			: 'https://feed.coinindex.agency/indices/BTCUSD_COININDEX', 
+	
+	'underlayerSymbol'	: '', 
+	'divider'			: 1,
+	
+	'txFeePaymentBy'	: 'IDX',
+	'txFee'				: 0, 
+	'txIssuerFee'		: 0, 
+
+	'issuerAddress'		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	
+	'issuerName'		: 'indexprotocol@indexprotocol.network', 
+	
+	'txFeeAddress'		: 'indxt0000000000000000000000000000', 
+	'txIsserFeeAddress'	: 'indxt0000000000000000000000000000', 
+	
+	'actionsAllowed'	: [], 
+	
+	'initDataValue'		: 0,
+	'latestDataValue'	: 0,
+	'changesByPrevios'	: 0,
+	'latestUpdateHeight': 0,	
+	
+	'dataUpdatesFreq'	: 1, 
+	
+	'emission'			: {
+		'initial'			: 10000000, 
+		'maxSupply'		: 10000000,
+		
+		'issueHeight'		: 0,
+		'maturityHeight'	: 0,
+		'callableMaturityHeight': 0	
+	},
+	
+	'multisig': [],
+
+	'options'				: {
+		'isTradable'			: true, 
+		'isBurnable'			: true,
+		'isMintable'			: false,
+		'isCallableMaturity'	: false,
+		'isFrozen'			: true,
+		'isTransferrable'		: true,
+		'isUniqe'				: false, 
+		'isMassPayable'		: false,
+		'isMultisigble'		: false,
+		'isContractAllowed'	: true 
+	},
+
+	'holders'	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	'txCounter': 0
+},
+{
+	'symbol'				: 'BTCUSD_BPI',
+	'dividedSymbol'		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'Bitcoin Price Index (BPI) by CoinDesc',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.coindesk.com/price/bitcoin', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'BTCUSD_CF_RTI',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'XBT/USD Real-Time Index by CryptoFacilities/CME',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.cryptofacilities.com/indices/XBT/USD/RTI', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'BTCUSD_CF_RR',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'XBT/USD Reference Rate Index by CryptoFacilities/CME',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.cryptofacilities.com/indices/XBT/USD/RR', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'ETHUSD_CF_RR',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'ETH/USD Reference Rate Index by CryptoFacilities/CME',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.cryptofacilities.com/indices/ETH/USD/RR', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'ETHUSD_CF_RTI',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'ETH/USD Real-Time Index by CryptoFacilities/CME',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.cryptofacilities.com/indices/ETH/USD/RTI', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'XRPUSD_CF_RR',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'XRP/USD Reference Rate Index by CryptoFacilities',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.cryptofacilities.com/indices/XRP/USD/RR', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'BCHUSD_CF_RR',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'BCH/USD Reference Rate Index by CryptoFacilities',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.cryptofacilities.com/indices/BCH/USD/RR', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'LTCUSD_CF_RR',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'LTC/USD Reference Rate Index by CryptoFacilities',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.cryptofacilities.com/indices/LTC/USD/RR', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'XRPUSD_CF_RTI',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'XRP/USD Real-Time Index by CryptoFacilities',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.cryptofacilities.com/indices/XRP/USD/RTI', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'BCHUSD_CF_RTI',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'BCH/USD Real-Time Index by CryptoFacilities',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.cryptofacilities.com/indices/BCH/USD/RTI', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'LTCUSD_CF_RTI',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'LTC/USD Real-Time Index by CryptoFacilities',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: 'https://www.cryptofacilities.com/indices/LTC/USD/RTI', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+},
+{
+	symbol				: 'BTCUSD_CG',
+	dividedSymbol		: '', //symbol for divided assets
+	type				: 'index',
+	family				: 'IND', //as Bloomber code
+	standart			: 'IDX42', //@todo: use spec file for validation and stored contract
+	
+	name				: 'BTC/USD Price Index by CoinGecko',
+	desc				: 'Standart index token for tracking performance and issues derivative', 
+	
+	spec				: '', //link to asset specification
+	newsfeed			: '', //link to RSS feed for news related to asset
+	
+	underlayerSymbol	: '', //for contract - base asset 
+	divider				: 1,
+	
+	txFeePaymentBy		: 'IDX',
+	txFee				: 0, //default fee, payed for validators 
+	txIssuerFee			: 0, //fee, payed to issuer from any tx with this asset 
+	
+	//fill by data from account
+	issuerAddress		: 'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da',	//special default address for native coin ONLY
+	issuerName			: 'indexprotocol@indexprotocol.network', //alt-name, one of registered at account
+	
+	txFeeAddress		: 'indxt0000000000000000000000000000', //address for collected tx fee
+	txIsserFeeAddress	: 'indxt0000000000000000000000000000', //address for collected Issuer fee (licensed) or 000000 default address
+	
+	actionsAllowed		: [], //actions, reserved for future
+	
+	//addition data for token. e.g. index value for index
+	initDataValue		: 0,
+	latestDataValue		: 0,
+	changesByPrevios	: 0, //unsigned
+	latestUpdateHeight	: 0,	
+	
+	//@todo: use block counter to update this
+	dataUpdatesFreq		: 1, //data updating declared
+	
+	emission			: {
+		initial			: 10000000, 
+		maxSupply		: 10000000,
+		
+		issueHeight		: 0,
+		maturityHeight	: 0,
+		callableMaturityHeight: 0	
+	},
+	
+	multisig: [], //for multisig action 
+
+	options				: {
+		isTradable			: true, 
+		isBurnable			: true,
+		isMintable			: false,
+		isCallableMaturity	: false,
+		isFrozen			: true,
+		isTransferrable		: true,
+		isUniqe				: false, 
+		isMassPayable		: false,
+		isMultisigble		: false,
+		isContractAllowed	: true 
+	},
+	
+	//total summ is CurculationSupply
+	//map of all holders (address => amount)
+	holders	: { 
+		'indxt3pSjMK9v1fF1v4Hoo1YtLtFj38Da' : 10000000
+	},  
+	txCounter: 0
+}];
+
+assets.forEach(function(a){
+	genesisAppState.assets.push( a );
+	
+	_.each(a.holders, function(ua, uz){
+		genesisAppState.initialAllocation.push({
+			to		: ua,
+			symbol	: a.symbol,
+			amount	: uz
+		});
+	});
 });
 
 let app_state = Buffer.from( JSON.stringify( genesisAppState ), 'utf8' ).toString('base64');
